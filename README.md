@@ -25,7 +25,6 @@ shutdown restart
 ```
 define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000
 set kiosk apiKey <immich-api-key>
-attr kiosk imageDuration 30
 attr kiosk fullyUrl http://10.3.3.50:2323
 set kiosk fullyPassword <fully-password>
 set kiosk album <name>

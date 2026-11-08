@@ -9,7 +9,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.2";
+my $IK_VERSION = "0.3.3";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -739,7 +739,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-attr-disable"></a><code>disable 0|1</code></li>
     <li><a id="ImmichKiosk-attr-imageDuration"></a><code>imageDuration &lt;seconds&gt;</code><br>
       Display time per slide. Passed as URL parameter duration and used for the rotation time.
-      Default for the rotation calculation: 60.</li>
+      Unset: no URL parameter (kiosk config applies), rotation is calculated with 60 seconds
+      (kiosk default). If the kiosk config uses a different duration, set this attribute accordingly.</li>
     <li><a id="ImmichKiosk-attr-imageBuffer"></a><code>imageBuffer &lt;seconds&gt;</code><br>
       Additional time per slide for transitions and loading. Default: 0.</li>
     <li><a id="ImmichKiosk-attr-layout"></a><code>layout single|portrait|landscape|splitview|splitview-landscape</code><br>
@@ -858,7 +859,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-attr-disable"></a><code>disable 0|1</code></li>
     <li><a id="ImmichKiosk-attr-imageDuration"></a><code>imageDuration &lt;Sekunden&gt;</code><br>
       Anzeigedauer pro Slide. Wird als URL-Parameter duration &uuml;bergeben und f&uuml;r die Rotationsdauer genutzt.
-      Standard f&uuml;r die Rotationsberechnung: 60.</li>
+      Nicht gesetzt: kein URL-Parameter (es gilt die Kiosk-Konfiguration), die Rotation wird mit 60 Sekunden
+      berechnet (Kiosk-Standard). Nutzt die Kiosk-Konfiguration eine andere Dauer, das Attribut entsprechend setzen.</li>
     <li><a id="ImmichKiosk-attr-imageBuffer"></a><code>imageBuffer &lt;Sekunden&gt;</code><br>
       Zuschlag pro Slide f&uuml;r &Uuml;bergang und Ladezeit. Standard: 0.</li>
     <li><a id="ImmichKiosk-attr-layout"></a><code>layout single|portrait|landscape|splitview|splitview-landscape</code><br>
