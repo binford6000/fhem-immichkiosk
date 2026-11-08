@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.4";
+my $IK_VERSION = "0.3.5";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -714,7 +714,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <li><a id="ImmichKiosk-set-album"></a><code>album &lt;name&gt;</code><br>
       Selects an album or virtual album. Stops a running rotation.</li>
-    <li><a id="ImmichKiosk-set-nextAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
+    <li><a id="ImmichKiosk-set-nextAlbum"></a><a id="ImmichKiosk-set-prevAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
       Without rotation: steps through the album list. With rotation: steps within the rotation.</li>
     <li><a id="ImmichKiosk-set-rotation"></a><code>rotation on|off</code><br>
       Automatic album rotation over all real albums (no virtual albums, no rotationExclude).
@@ -722,10 +722,18 @@ sub ImmichKiosk_GetSecret {
       Display time per album: slides &times; (imageDuration + imageBuffer), limited by rotationMax.</li>
     <li><a id="ImmichKiosk-set-reread"></a><code>reread</code><br>
       Reloads the album list from Immich.</li>
-    <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code>,
-      <code>kioskPassword &lt;pw&gt;</code>, <code>fullyPassword &lt;pw&gt;</code><br>
-      Stored in the FHEM KeyValueStore. Without argument the value is deleted.</li>
-    <li><a id="ImmichKiosk-set-nextImage"></a><code>nextImage</code>, <code>prevImage</code>,
+    <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
+      Immich API key (Immich: Account Settings &rarr; API Keys). Required to read albums.
+      Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
+    <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
+      Only needed if immich-kiosk is protected with a password (option <code>kiosk.password</code> in the
+      kiosk config). immich-kiosk then expects it as URL parameter password; the module appends it to the
+      URL sent to Fully. It is not shown in reading url.
+      Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
+    <li><a id="ImmichKiosk-set-fullyPassword"></a><code>fullyPassword &lt;pw&gt;</code><br>
+      Password of the Fully Kiosk Browser Remote Administration. Only needed with attribute fullyUrl.
+      Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
+    <li><a id="ImmichKiosk-set-nextImage"></a><a id="ImmichKiosk-set-prevImage"></a><a id="ImmichKiosk-set-addToFavorites"></a><a id="ImmichKiosk-set-removeFromFavorites"></a><code>nextImage</code>, <code>prevImage</code>,
       <code>addToFavorites</code>, <code>removeFromFavorites</code><br>
       Only with attribute fullyUrl: clicks the corresponding kiosk control via Fully JavaScript injection.
       addToFavorites / removeFromFavorites use the like button of the kiosk more-info overlay.</li>
@@ -836,7 +844,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <li><a id="ImmichKiosk-set-album"></a><code>album &lt;name&gt;</code><br>
       W&auml;hlt ein Album oder virtuelles Album. Stoppt eine laufende Rotation.</li>
-    <li><a id="ImmichKiosk-set-nextAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
+    <li><a id="ImmichKiosk-set-nextAlbum"></a><a id="ImmichKiosk-set-prevAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
       Ohne Rotation: bl&auml;ttert durch die Albumliste. Mit Rotation: bl&auml;ttert innerhalb der Rotation.</li>
     <li><a id="ImmichKiosk-set-rotation"></a><code>rotation on|off</code><br>
       Automatische Album-Rotation &uuml;ber alle echten Alben (ohne virtuelle Alben und rotationExclude).
@@ -844,10 +852,18 @@ sub ImmichKiosk_GetSecret {
       Anzeigedauer je Album: Slides &times; (imageDuration + imageBuffer), begrenzt durch rotationMax.</li>
     <li><a id="ImmichKiosk-set-reread"></a><code>reread</code><br>
       L&auml;dt die Albumliste neu aus Immich.</li>
-    <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code>,
-      <code>kioskPassword &lt;pw&gt;</code>, <code>fullyPassword &lt;pw&gt;</code><br>
-      Werden im FHEM-KeyValueStore gespeichert. Ohne Argument wird der Wert gel&ouml;scht.</li>
-    <li><a id="ImmichKiosk-set-nextImage"></a><code>nextImage</code>, <code>prevImage</code>,
+    <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
+      Immich-API-Key (Immich: Kontoeinstellungen &rarr; API-Schl&uuml;ssel). Wird zum Einlesen der Alben ben&ouml;tigt.
+      Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
+    <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
+      Nur n&ouml;tig, wenn immich-kiosk mit einem Passwort gesch&uuml;tzt ist (Option <code>kiosk.password</code> in der
+      Kiosk-Konfiguration). immich-kiosk erwartet es dann als URL-Parameter password; das Modul h&auml;ngt es an die
+      an Fully gesendete URL an. Im Reading url erscheint es nicht.
+      Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
+    <li><a id="ImmichKiosk-set-fullyPassword"></a><code>fullyPassword &lt;pw&gt;</code><br>
+      Passwort der Remote Administration des Fully Kiosk Browser. Nur n&ouml;tig mit Attribut fullyUrl.
+      Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
+    <li><a id="ImmichKiosk-set-nextImage"></a><a id="ImmichKiosk-set-prevImage"></a><a id="ImmichKiosk-set-addToFavorites"></a><a id="ImmichKiosk-set-removeFromFavorites"></a><code>nextImage</code>, <code>prevImage</code>,
       <code>addToFavorites</code>, <code>removeFromFavorites</code><br>
       Nur mit Attribut fullyUrl: klickt das jeweilige Bedienelement des Kiosk per Fully-JavaScript-Injection.
       addToFavorites / removeFromFavorites nutzen den Like-Button im More-Info-Overlay des Kiosk.</li>
