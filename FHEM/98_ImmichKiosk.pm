@@ -2,6 +2,7 @@
 ##############################################################################
 # 98_ImmichKiosk.pm
 # Controls immich-kiosk (https://github.com/damongolding/immich-kiosk) from FHEM
+# Note: this module was and is developed with AI assistance ("vibe coded", Claude by Anthropic).
 ##############################################################################
 package main;
 use strict;
@@ -9,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.3";
+my $IK_VERSION = "0.3.4";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -696,7 +697,9 @@ sub ImmichKiosk_GetSecret {
   Albums are read from the Immich API; the selected album is passed to immich-kiosk as URL parameter,
   so the kiosk configuration file is never modified. Optionally the URL is sent to a
   Fully Kiosk Browser via its REST API.<br>
-  Source: <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br><br>
+  Source: <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br>
+  <b>Note:</b> this module was and is developed with AI assistance ("vibe coded", Claude by Anthropic).
+  It is tested in the maintainer's own setup; use at your own risk.<br><br>
   <a id="ImmichKiosk-define"></a>
   <b>Define</b>
   <ul>
@@ -816,7 +819,9 @@ sub ImmichKiosk_GetSecret {
   Die Alben werden &uuml;ber die Immich-API gelesen; das gew&auml;hlte Album wird immich-kiosk als URL-Parameter
   &uuml;bergeben, die Konfigurationsdatei des Kiosk wird nie ver&auml;ndert. Optional wird die URL per REST-API
   an einen Fully Kiosk Browser gesendet.<br>
-  Quelle: <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br><br>
+  Quelle: <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br>
+  <b>Hinweis:</b> Dieses Modul wurde und wird mit KI-Unterst&uuml;tzung entwickelt (&bdquo;vibe coded&ldquo;, Claude von Anthropic).
+  Es ist im eigenen Setup des Maintainers getestet; Nutzung auf eigene Gefahr.<br><br>
   <a id="ImmichKiosk-define"></a>
   <b>Define</b>
   <ul>

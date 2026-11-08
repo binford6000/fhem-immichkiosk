@@ -6,6 +6,9 @@ URL to a Fully Kiosk Browser via its REST API.
 
 No SSH, no scripts on the kiosk host, no changes to `config.yaml`.
 
+> **Note:** This module was and is developed with AI assistance ("vibe coded", Claude by Anthropic).
+> It is tested in the maintainer's own setup; use at your own risk.
+
 ## Requirements
 
 - Immich with an API key (album read access)
