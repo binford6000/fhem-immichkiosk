@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.5";
+my $IK_VERSION = "0.3.6";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -56,6 +56,7 @@ sub ImmichKiosk_Define {
     CommandAttr(undef, "$a[0] room ImmichKiosk") if (!AttrVal($a[0], "room", undef));
     CommandAttr(undef, "$a[0] webCmd $IK_WEBCMD") if (!AttrVal($a[0], "webCmd", undef));
     CommandAttr(undef, "$a[0] cmdIcon $IK_CMDICON") if (!AttrVal($a[0], "cmdIcon", undef));
+    CommandAttr(undef, "$a[0] icon tablet") if (!AttrVal($a[0], "icon", undef));
   }
   ImmichKiosk_Startup($hash) if ($init_done);
   return;
@@ -705,7 +706,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <code>define &lt;name&gt; ImmichKiosk &lt;immich-url&gt; &lt;kiosk-url&gt;</code><br>
     Example: <code>define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000</code><br>
-    A new device gets room ImmichKiosk, cmdIcon for the image commands and webCmd album (extended to
+    A new device gets room ImmichKiosk, icon tablet, cmdIcon for the image commands and webCmd album (extended to
     album:prevImage:nextImage:addToFavorites once fullyUrl is set; a changed webCmd is never touched). Afterwards set the Immich API key:
     <code>set kiosk apiKey &lt;key&gt;</code>
   </ul><br>
@@ -835,7 +836,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <code>define &lt;name&gt; ImmichKiosk &lt;immich-url&gt; &lt;kiosk-url&gt;</code><br>
     Beispiel: <code>define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000</code><br>
-    Ein neues Ger&auml;t bekommt room ImmichKiosk, cmdIcon f&uuml;r die Bildbefehle und webCmd album (erweitert auf
+    Ein neues Ger&auml;t bekommt room ImmichKiosk, icon tablet, cmdIcon f&uuml;r die Bildbefehle und webCmd album (erweitert auf
     album:prevImage:nextImage:addToFavorites, sobald fullyUrl gesetzt wird; ein ge&auml;ndertes webCmd bleibt unber&uuml;hrt). Danach den Immich-API-Key setzen:
     <code>set kiosk apiKey &lt;key&gt;</code>
   </ul><br>
