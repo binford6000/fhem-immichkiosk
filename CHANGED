@@ -1,0 +1,9 @@
+2026-11-08 0.3.0 attribute layout replaces splitview (URL parameter + slide
+                 calculation for all kiosk layouts), square images handled
+2026-11-08 0.2.3 default cmdIcon, splitview documentation
+2026-11-08 0.2.2 removeFromFavorites, default webCmd, errors in lastError
+2026-11-08 0.2.1 German commandref, all readings documented, default room
+2026-11-08 0.2.0 splitview slide count, imageBuffer, rotationMax/Retry, resume,
+                 rotationProgress, albumOrder, albumExclude, prefix match and
+                 kiosk keywords in virtualAlbums, addToFavorites, click selectors
+2026-11-08 0.1.0 initial version

@@ -1,1 +1,35 @@
-<user>
+# FHEM ImmichKiosk
+
+FHEM module to control an [immich-kiosk](https://github.com/damongolding/immich-kiosk) slideshow:
+album selection, virtual albums and automatic album rotation via URL parameters. Optional: push the
+URL to a Fully Kiosk Browser via its REST API.
+
+No SSH, no scripts on the kiosk host, no changes to `config.yaml`.
+
+## Requirements
+
+- Immich with an API key (album read access)
+- immich-kiosk reachable from the display device
+- optional: Fully Kiosk Browser with Remote Admin enabled
+
+## Installation
+
+```
+update add https://raw.githubusercontent.com/binford6000/fhem-immichkiosk/main/controls_immichkiosk.txt
+update
+shutdown restart
+```
+
+## Quick start
+
+```
+define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000
+set kiosk apiKey <immich-api-key>
+attr kiosk imageDuration 30
+attr kiosk fullyUrl http://10.3.3.50:2323
+set kiosk fullyPassword <fully-password>
+set kiosk album <name>
+set kiosk rotation on
+```
+
+Full documentation: `help ImmichKiosk` in FHEM.

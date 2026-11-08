@@ -1,0 +1,31 @@
+name: controls
+on:
+  push:
+    branches: [main]
+    paths: ['FHEM/**']
+  workflow_dispatch:
+jobs:
+  controls:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate controls file
+        run: |
+          : > controls_immichkiosk.txt
+          for f in FHEM/*.pm; do
+            ts=$(TZ=Europe/Berlin git log -1 --format=%cd --date=format-local:'%Y-%m-%d_%H:%M:%S' -- "$f")
+            size=$(stat -c %s "$f")
+            echo "UPD $ts $size $f" >> controls_immichkiosk.txt
+          done
+          cat controls_immichkiosk.txt
+      - name: Commit controls file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add controls_immichkiosk.txt
+          git diff --cached --quiet || git commit -m "controls: update [skip ci]"
+          git push
