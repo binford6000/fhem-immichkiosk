@@ -9,7 +9,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.0";
+my $IK_VERSION = "0.3.1";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -690,6 +690,8 @@ sub ImmichKiosk_GetSecret {
 <a id="ImmichKiosk"></a>
 <h3>ImmichKiosk</h3>
 <ul>
+  <b>Module:</b> 98_ImmichKiosk.pm &nbsp; <b>Maintainer:</b> binford6000 &nbsp; <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
+  <b>Source:</b> <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br><br>
   Controls an <a href="https://github.com/damongolding/immich-kiosk">immich-kiosk</a> slideshow.
   Albums are read from the Immich API; the selected album is passed to immich-kiosk as URL parameter,
   so the kiosk configuration file is never modified. Optionally the URL is sent to a
@@ -806,6 +808,8 @@ sub ImmichKiosk_GetSecret {
 <a id="ImmichKiosk"></a>
 <h3>ImmichKiosk</h3>
 <ul>
+  <b>Modul:</b> 98_ImmichKiosk.pm &nbsp; <b>Maintainer:</b> binford6000 &nbsp; <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
+  <b>Quelle:</b> <a href="https://github.com/binford6000/fhem-immichkiosk">github.com/binford6000/fhem-immichkiosk</a><br><br>
   Steuert eine <a href="https://github.com/damongolding/immich-kiosk">immich-kiosk</a>-Diashow.
   Die Alben werden &uuml;ber die Immich-API gelesen; das gew&auml;hlte Album wird immich-kiosk als URL-Parameter
   &uuml;bergeben, die Konfigurationsdatei des Kiosk wird nie ver&auml;ndert. Optional wird die URL per REST-API
