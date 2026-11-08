@@ -1,0 +1,1 @@
+UPD 2026-11-08_19:44:14 44084 FHEM/98_ImmichKiosk.pm
