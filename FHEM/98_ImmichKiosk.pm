@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.7";
+my $IK_VERSION = "0.3.8";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -728,6 +728,8 @@ sub ImmichKiosk_GetSecret {
       Minimum permissions: <code>album.read</code> (album list) and <code>asset.read</code>
       (image orientation for the layout calculation; not needed with layout single or unset).
       A separate key for this module is recommended, independent of the key used by immich-kiosk.
+      No write permissions are needed: addToFavorites / removeFromFavorites are executed by immich-kiosk
+      with its own API key (kiosk config), not by this module.
       Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
       Only needed if immich-kiosk is protected with a password (option <code>kiosk.password</code> in the
@@ -740,7 +742,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-nextImage"></a><a id="ImmichKiosk-set-prevImage"></a><a id="ImmichKiosk-set-addToFavorites"></a><a id="ImmichKiosk-set-removeFromFavorites"></a><code>nextImage</code>, <code>prevImage</code>,
       <code>addToFavorites</code>, <code>removeFromFavorites</code><br>
       Only with attribute fullyUrl: clicks the corresponding kiosk control via Fully JavaScript injection.
-      addToFavorites / removeFromFavorites use the like button of the kiosk more-info overlay.</li>
+      addToFavorites / removeFromFavorites use the like button of the kiosk more-info overlay; the favorite is
+      set in Immich by immich-kiosk with its own API key, which needs the corresponding permission.</li>
   </ul><br>
   <a id="ImmichKiosk-get"></a>
   <b>Get</b>
@@ -861,6 +864,8 @@ sub ImmichKiosk_GetSecret {
       Mindestberechtigungen: <code>album.read</code> (Albumliste) und <code>asset.read</code>
       (Bildausrichtung f&uuml;r die Layout-Berechnung; bei layout single oder nicht gesetzt nicht n&ouml;tig).
       Empfohlen ist ein eigener Key f&uuml;r das Modul, unabh&auml;ngig vom Key von immich-kiosk.
+      Schreibrechte sind nicht n&ouml;tig: addToFavorites / removeFromFavorites f&uuml;hrt immich-kiosk mit seinem
+      eigenen API-Key (Kiosk-Konfiguration) aus, nicht dieses Modul.
       Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
       Nur n&ouml;tig, wenn immich-kiosk mit einem Passwort gesch&uuml;tzt ist (Option <code>kiosk.password</code> in der
@@ -873,7 +878,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-nextImage"></a><a id="ImmichKiosk-set-prevImage"></a><a id="ImmichKiosk-set-addToFavorites"></a><a id="ImmichKiosk-set-removeFromFavorites"></a><code>nextImage</code>, <code>prevImage</code>,
       <code>addToFavorites</code>, <code>removeFromFavorites</code><br>
       Nur mit Attribut fullyUrl: klickt das jeweilige Bedienelement des Kiosk per Fully-JavaScript-Injection.
-      addToFavorites / removeFromFavorites nutzen den Like-Button im More-Info-Overlay des Kiosk.</li>
+      addToFavorites / removeFromFavorites nutzen den Like-Button im More-Info-Overlay des Kiosk; den Favoriten
+      setzt immich-kiosk mit seinem eigenen API-Key in Immich, der daf&uuml;r die entsprechende Berechtigung braucht.</li>
   </ul><br>
   <a id="ImmichKiosk-get"></a>
   <b>Get</b>
