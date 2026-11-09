@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.9";
+my $IK_VERSION = "0.4.0";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -47,10 +47,13 @@ sub ImmichKiosk_Define {
   my ($hash, $def) = @_;
   my @a = split(/\s+/, $def);
   return "Usage: define <name> ImmichKiosk <immich-url> <kiosk-url>" if (@a != 4);
+  return "immich-url '$a[2]' must start with http:// or https://" if ($a[2] !~ m{^https?://[^/\s]+});
+  return "kiosk-url '$a[3]' must start with http:// or https://" if ($a[3] !~ m{^https?://[^/\s]+});
   $hash->{IMMICH_URL} = $a[2] =~ s{/+$}{}r;
   $hash->{KIOSK_URL}  = $a[3];
   $hash->{VERSION}    = $IK_VERSION;
   $hash->{NOTIFYDEV}  = "global";
+  readingsSingleUpdate($hash, "state", "defined", 0) if (!defined(ReadingsVal($a[0], "state", undef)));
   # new device (not loaded from fhem.cfg): put it into its own room
   if ($init_done) {
     CommandAttr(undef, "$a[0] room ImmichKiosk") if (!AttrVal($a[0], "room", undef));
@@ -95,10 +98,27 @@ sub ImmichKiosk_Notify {
 }
 sub ImmichKiosk_Startup {
   my ($hash) = @_;
-  return if (IsDisabled($hash->{NAME}));
+  my $name = $hash->{NAME};
+  return if (IsDisabled($name));
+  # leave state "disabled" after the attribute was removed
+  readingsSingleUpdate($hash, "state", ReadingsVal($name, "album", "defined"), 1)
+    if (ReadingsVal($name, "state", "") eq "disabled");
   ImmichKiosk_StartTimers($hash);
-  # continue a running rotation after restart
-  ImmichKiosk_Reread($hash, sub { ImmichKiosk_Rotate($hash, "resume") });
+  ImmichKiosk_LoadAlbums($hash);
+  # continue a running rotation after restart; needs no Immich access while the current album is running
+  if (ReadingsVal($name, "rotation", "off") eq "on") {
+    my $ts = ReadingsNum($name, ".rotationUntilTs", 0);
+    if ($ts > time() + 5) {
+      ImmichKiosk_RotateAt($hash, $ts);
+      Log3($name, 3, "$name: rotation resumed until " . FmtDateTime($ts));
+    }
+    else {
+      # expired: next album (includes reread and retry timer)
+      ImmichKiosk_Rotate($hash, "next");
+      return;
+    }
+  }
+  ImmichKiosk_Reread($hash);
   return;
 }
 sub ImmichKiosk_StartTimers {
@@ -141,8 +161,10 @@ sub ImmichKiosk_Set {
   my $known = grep { (split(/:/, $_))[0] eq $cmd } @usage;
   return "Unknown argument $cmd, choose one of " . join(" ", @usage) if (!$known);
   return "$name is disabled" if (IsDisabled($name) && !($cmd eq "rotation" && ($args[0] // "") eq "off"));
+  my $noAlbums = "no albums loaded - check apiKey and reading lastError, then: set $name reread";
   if ($cmd eq "album") {
     return "usage: set $name album <name>" if (!@args);
+    return $noAlbums if (!%{$hash->{helper}{albums} // {}});
     return ImmichKiosk_SelectAlbum($hash, $args[0], 0);
   }
   if ($cmd eq "nextAlbum" || $cmd eq "prevAlbum") {
@@ -153,7 +175,7 @@ sub ImmichKiosk_Set {
       return;
     }
     my @l = @{$hash->{helper}{order} // []};
-    return "no albums available" if (!@l);
+    return $noAlbums if (!@l);
     my $cur = ReadingsVal($name, "album", "");
     my ($i) = grep { $l[$_] eq $cur } 0 .. $#l;
     # unknown current album: next -> first, prev -> last
@@ -166,8 +188,7 @@ sub ImmichKiosk_Set {
     return;
   }
   if ($cmd eq "reread") {
-    ImmichKiosk_Reread($hash);
-    return;
+    return ImmichKiosk_Reread($hash);
   }
   if ($IK_JS{$cmd}) {
     readingsSingleUpdate($hash, "lastCommand", $cmd, 1);
@@ -181,7 +202,7 @@ sub ImmichKiosk_Get {
   if ($cmd eq "albums") {
     ImmichKiosk_LoadAlbums($hash);
     my $a = $hash->{helper}{albums} // {};
-    return "no albums loaded" if (!%{$a});
+    return "no albums loaded - check apiKey and reading lastError, then: set $name reread" if (!%{$a});
     my $ret = sprintf("%-25s %7s  %s\n", "Album", "Assets", "ID(s)");
     for my $n (@{$hash->{helper}{order}}) {
       $ret .= sprintf("%-25s %7s  %s\n", $n, $a->{$n}{count} // "-", join(",", @{$a->{$n}{ids}}));
@@ -218,12 +239,20 @@ sub ImmichKiosk_Attr {
   if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude)$/ && $IK_RAW{$name}) {
     ImmichKiosk_BuildAlbums($hash, { $attr => $cmd eq "set" ? $val : "" });
   }
-  elsif ($attr =~ /^(albumRefreshInterval|progressInterval|disable)$/ && $init_done) {
+  elsif ($attr =~ /^(albumRefreshInterval|progressInterval)$/ && $init_done) {
+    # attribute value is applied after this function returns
     RemoveInternalTimer($hash, "ImmichKiosk_StartTimers");
     InternalTimer(gettimeofday() + 1, "ImmichKiosk_StartTimers", $hash);
-    if ($attr eq "disable" && $cmd eq "set" && $val) {
-      RemoveInternalTimer($hash, "ImmichKiosk_RotateTimer");
+  }
+  elsif ($attr eq "disable" && $init_done) {
+    if ($cmd eq "set" && $val) {
+      RemoveInternalTimer($hash);
       readingsSingleUpdate($hash, "state", "disabled", 1);
+    }
+    else {
+      # re-enabled: restart timers, rotation and reread after the attribute is removed
+      RemoveInternalTimer($hash, "ImmichKiosk_Startup");
+      InternalTimer(gettimeofday() + 1, "ImmichKiosk_Startup", $hash);
     }
   }
   return;
@@ -236,10 +265,7 @@ sub ImmichKiosk_Reread {
   my $name = $hash->{NAME};
   return if (IsDisabled($name));
   my $key = ImmichKiosk_GetSecret($hash, "apiKey");
-  if (!$key) {
-    readingsSingleUpdate($hash, "lastError", "apiKey missing", 1);
-    return;
-  }
+  return ImmichKiosk_Error($hash, "Immich", "apiKey not set - set $name apiKey <key>") if (!$key);
   HttpUtils_NonblockingGet({
     url      => "$hash->{IMMICH_URL}/api/albums",
     timeout  => 10,
@@ -257,17 +283,15 @@ sub ImmichKiosk_RereadCallback {
   my $name = $hash->{NAME};
   my $code = $param->{code} // 0;
   if ($err || $code != 200) {
-    my $msg = $err || "HTTP $code";
-    Log3($name, 2, "$name: album reread failed: $msg");
-    readingsSingleUpdate($hash, "lastError", "album reread: $msg", 1);
+    ImmichKiosk_Error($hash, "Immich", "album reread failed: " . ImmichKiosk_HttpMsg($param, $err, $data, "album.read"));
     return;
   }
   my $list = eval { JSON::PP::decode_json($data) };
   if (ref($list) ne "ARRAY") {
-    Log3($name, 2, "$name: album reread: invalid JSON from Immich");
-    readingsSingleUpdate($hash, "lastError", "album reread: invalid response", 1);
+    ImmichKiosk_Error($hash, "Immich", "album reread failed: invalid response from $hash->{IMMICH_URL}");
     return;
   }
+  ImmichKiosk_ClearError($hash, "Immich");
   $IK_RAW{$name} = $list;
   ImmichKiosk_BuildAlbums($hash, {});
   readingsBeginUpdate($hash);
@@ -373,9 +397,8 @@ sub ImmichKiosk_SelectAlbum {
   readingsBulkUpdate($hash, "url", ImmichKiosk_BuildUrl($hash, $e->{ids}, 0));
   readingsBulkUpdate($hash, "state", $album);
   readingsEndUpdate($hash, 1);
-  ImmichKiosk_SendUrl($hash, $e->{ids});
   Log3($name, 3, "$name: loading album $album");
-  return;
+  return ImmichKiosk_SendUrl($hash, $e->{ids});
 }
 sub ImmichKiosk_BuildUrl {
   my ($hash, $ids, $withSecret) = @_;
@@ -400,9 +423,8 @@ sub ImmichKiosk_SendUrl {
   return if (AttrVal($hash->{NAME}, "fullyUrl", "") eq "");
   my $url = ImmichKiosk_BuildUrl($hash, $ids, 1);
   # store as start URL (survives tablet restarts), then load it
-  ImmichKiosk_Fully($hash, "setStringSetting", { key => "startURL", value => $url },
+  return ImmichKiosk_Fully($hash, "setStringSetting", { key => "startURL", value => $url },
     sub { ImmichKiosk_Fully($hash, "loadStartURL", {}) });
-  return;
 }
 ##############################################################################
 # Rotation: start | stop | next | prev | resume
@@ -469,7 +491,8 @@ sub ImmichKiosk_RotateNext {
   return if ($gen != $hash->{helper}{rotGen} || ReadingsVal($name, "rotation", "off") ne "on");
   my @real = ImmichKiosk_RotationList($hash);
   if (!@real) {
-    Log3($name, 2, "$name: rotation - no albums available");
+    # retry timer of ImmichKiosk_Rotate stays active
+    ImmichKiosk_Error($hash, "Immich", "rotation: no albums available (all excluded, virtual or empty)");
     return;
   }
   my $cur  = ReadingsVal($name, "album", "");
@@ -521,8 +544,8 @@ sub ImmichKiosk_SlidesParse {
   my $res   = (!$err && ($param->{code} // 0) == 200) ? eval { JSON::PP::decode_json($data) } : undef;
   my $items = (ref($res) eq "HASH" && ref($res->{assets}) eq "HASH") ? $res->{assets}{items} : undef;
   if (ref($items) ne "ARRAY") {
-    Log3($name, 2, "$name: image formats for $ctx->{album} not available ("
-                 . ($err || "HTTP " . ($param->{code} // "?")) . "), using asset count");
+    my $msg = ($err || ($param->{code} // 0) != 200) ? ImmichKiosk_HttpMsg($param, $err, $data, "asset.read") : "invalid response";
+    ImmichKiosk_Error($hash, "Immich", "image formats for $ctx->{album} not available ($msg), using asset count");
     return ImmichKiosk_RotateApply($hash, $ctx, $ctx->{count});
   }
   for my $as (@{$items}) {
@@ -617,6 +640,7 @@ sub ImmichKiosk_Fully {
   return "attribute fullyUrl not set" if ($base eq "");
   $base =~ s{/+$}{};
   my $pw = ImmichKiosk_GetSecret($hash, "fullyPassword") // "";
+  return ImmichKiosk_Error($hash, "Fully", "fullyPassword not set - set $name fullyPassword <pw>") if ($pw eq "");
   my $q  = "cmd=$cmd&type=json&password=" . ImmichKiosk_UrlEnc($pw);
   $q .= "&$_=" . ImmichKiosk_UrlEnc($args->{$_}) for (sort keys %{$args});
   HttpUtils_NonblockingGet({
@@ -638,16 +662,16 @@ sub ImmichKiosk_FullyCallback {
   my $cmd  = $param->{fullyCmd};
   my $code = $param->{code} // 0;
   if ($err || $code != 200) {
-    Log3($name, 2, "$name: Fully $cmd failed: " . ($err || "HTTP $code"));
-    readingsSingleUpdate($hash, "lastError", "Fully $cmd: " . ($err || "HTTP $code"), 1);
+    ImmichKiosk_Error($hash, "Fully", "$cmd failed: " . ($err ? "connection failed: $err" : "HTTP $code"));
     return;
   }
   my $res = eval { JSON::PP::decode_json($data) };
   if (ref($res) eq "HASH" && ($res->{status} // "") =~ /error/i) {
-    Log3($name, 2, "$name: Fully $cmd: " . ($res->{statustext} // "error"));
-    readingsSingleUpdate($hash, "lastError", "Fully $cmd: " . ($res->{statustext} // "error"), 1);
+    # wrong password: Fully answers with status Error and a statustext
+    ImmichKiosk_Error($hash, "Fully", "$cmd failed: " . ($res->{statustext} // "error") . " - check fullyPassword");
     return;
   }
+  ImmichKiosk_ClearError($hash, "Fully");
   Log3($name, 4, "$name: Fully $cmd ok");
   $param->{next}->() if (ref($param->{next}) eq "CODE");
   return;
@@ -666,6 +690,36 @@ sub ImmichKiosk_CleanName {
   # spaces -> "-", "Abu Dhabi 2024" -> "Abu-Dhabi-2024"
   $n =~ s/\s+/-/g;
   return encode("UTF-8", $n);
+}
+sub ImmichKiosk_Error {
+  my ($hash, $src, $msg) = @_;
+  my $name = $hash->{NAME};
+  $msg = "$src: $msg";
+  # log a repeated error only at verbose 4
+  my $new = ReadingsVal($name, "lastError", "") ne $msg;
+  Log3($name, $new ? 2 : 4, "$name: $msg");
+  readingsSingleUpdate($hash, "lastError", $msg, 1) if ($new);
+  return $msg;
+}
+sub ImmichKiosk_ClearError {
+  my ($hash, $src) = @_;
+  my $name = $hash->{NAME};
+  # only clear errors of the same source (Immich / Fully)
+  return if (ReadingsVal($name, "lastError", "") !~ /^\Q$src\E:/);
+  Log3($name, 3, "$name: $src ok again");
+  readingsDelete($hash, "lastError");
+  return;
+}
+sub ImmichKiosk_HttpMsg {
+  my ($param, $err, $data, $perm) = @_;
+  return "connection to $param->{url} failed: $err" if ($err);
+  my $code = $param->{code} // 0;
+  my $res  = eval { JSON::PP::decode_json($data // "") };
+  # Immich error responses contain a message field
+  my $detail = (ref($res) eq "HASH" && defined($res->{message}) && !ref($res->{message})) ? " ($res->{message})" : "";
+  return "HTTP 401 - apiKey invalid$detail" if ($code == 401);
+  return "HTTP 403 - apiKey lacks permission $perm$detail" if ($code == 403);
+  return "HTTP $code$detail";
 }
 sub ImmichKiosk_UrlEnc {
   my ($s) = @_;
@@ -800,8 +854,10 @@ sub ImmichKiosk_GetSecret {
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>
   <ul>
-    <li><code>state</code> - current album; ready before the first selection, disabled if disabled</li>
-    <li><code>lastError</code> - last error (Immich, Fully, missing apiKey)</li>
+    <li><code>state</code> - current album; defined / ready before the first selection, disabled if disabled</li>
+    <li><code>lastError</code> - last error, prefixed with its source (Immich: / Fully:), e.g. missing apiKey,
+      invalid apiKey (HTTP 401), missing permission (HTTP 403), connection errors, wrong fullyPassword.
+      Deleted again after the next successful request to the same source.</li>
     <li><code>album</code> - selected album</li>
     <li><code>albumId</code> - Immich album ID(s) or kiosk keyword of the selected album</li>
     <li><code>albumPictures</code> - number of assets of the selected album (- for kiosk keywords)</li>
@@ -937,8 +993,10 @@ sub ImmichKiosk_GetSecret {
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>
   <ul>
-    <li><code>state</code> - aktuelles Album; ready vor der ersten Auswahl, disabled wenn deaktiviert</li>
-    <li><code>lastError</code> - letzter Fehler (Immich, Fully, fehlender apiKey)</li>
+    <li><code>state</code> - aktuelles Album; defined / ready vor der ersten Auswahl, disabled wenn deaktiviert</li>
+    <li><code>lastError</code> - letzter Fehler mit Quelle als Pr&auml;fix (Immich: / Fully:), z.B. fehlender apiKey,
+      ung&uuml;ltiger apiKey (HTTP 401), fehlende Berechtigung (HTTP 403), Verbindungsfehler, falsches fullyPassword.
+      Wird nach der n&auml;chsten erfolgreichen Anfrage an dieselbe Quelle wieder gel&ouml;scht.</li>
     <li><code>album</code> - gew&auml;hltes Album</li>
     <li><code>albumId</code> - Immich-Album-ID(s) oder Kiosk-Schl&uuml;sselwort des gew&auml;hlten Albums</li>
     <li><code>albumPictures</code> - Bildanzahl des gew&auml;hlten Albums (- bei Kiosk-Schl&uuml;sselw&ouml;rtern)</li>

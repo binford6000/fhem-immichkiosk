@@ -1,3 +1,8 @@
+2026-11-09 0.4.0 error handling: URL check in define, clear messages for missing/invalid
+                 apiKey, missing permissions, connection errors and wrong fullyPassword,
+                 lastError is deleted after success
+                 fix: rotation resumes after restart even if Immich is unreachable
+                 fix: state and timers after removing attribute disable
 2026-11-09 0.3.9 first public release
                  - album selection via Immich API, kiosk URL parameters (no config changes)
                  - virtual albums (album names with prefix match, IDs, kiosk keywords)
