@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.8";
+my $IK_VERSION = "0.3.9";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -706,8 +706,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <code>define &lt;name&gt; ImmichKiosk &lt;immich-url&gt; &lt;kiosk-url&gt;</code><br>
     Example: <code>define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000</code><br>
-    A new device gets room ImmichKiosk, icon tablet, cmdIcon for the image commands and webCmd album (extended to
-    album:prevImage:nextImage:addToFavorites once fullyUrl is set; a changed webCmd is never touched). Afterwards set the Immich API key:
+    Afterwards set the Immich API key:
     <code>set kiosk apiKey &lt;key&gt;</code>
   </ul><br>
   <a id="ImmichKiosk-set"></a>
@@ -795,7 +794,8 @@ sub ImmichKiosk_GetSecret {
       Additional static URL parameters, e.g. <code>image_fit=cover&amp;transition=fade</code></li>
     <li><a id="ImmichKiosk-attr-fullyUrl"></a><code>fullyUrl &lt;url&gt;</code><br>
       Fully Kiosk Browser REST endpoint, e.g. <code>http://10.3.3.50:2323</code>.
-      If set, the kiosk URL is stored as Fully start URL and loaded.</li>
+      If set, the kiosk URL is stored as Fully start URL and loaded, and the commands nextImage, prevImage,
+      addToFavorites and removeFromFavorites become available.</li>
   </ul><br>
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>
@@ -842,8 +842,7 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <code>define &lt;name&gt; ImmichKiosk &lt;immich-url&gt; &lt;kiosk-url&gt;</code><br>
     Beispiel: <code>define kiosk ImmichKiosk http://immich.lan:2283 http://kiosk.lan:3000</code><br>
-    Ein neues Ger&auml;t bekommt room ImmichKiosk, icon tablet, cmdIcon f&uuml;r die Bildbefehle und webCmd album (erweitert auf
-    album:prevImage:nextImage:addToFavorites, sobald fullyUrl gesetzt wird; ein ge&auml;ndertes webCmd bleibt unber&uuml;hrt). Danach den Immich-API-Key setzen:
+    Danach den Immich-API-Key setzen:
     <code>set kiosk apiKey &lt;key&gt;</code>
   </ul><br>
   <a id="ImmichKiosk-set"></a>
@@ -932,7 +931,8 @@ sub ImmichKiosk_GetSecret {
       Zus&auml;tzliche feste URL-Parameter, z.B. <code>image_fit=cover&amp;transition=fade</code></li>
     <li><a id="ImmichKiosk-attr-fullyUrl"></a><code>fullyUrl &lt;url&gt;</code><br>
       REST-Endpunkt des Fully Kiosk Browser, z.B. <code>http://10.3.3.50:2323</code>.
-      Wenn gesetzt, wird die Kiosk-URL als Fully-Start-URL gespeichert und geladen.</li>
+      Wenn gesetzt, wird die Kiosk-URL als Fully-Start-URL gespeichert und geladen, und die Befehle nextImage, prevImage,
+      addToFavorites und removeFromFavorites stehen zur Verf&uuml;gung.</li>
   </ul><br>
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>

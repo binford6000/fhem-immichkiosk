@@ -1,3 +1,4 @@
+2026-11-09 0.3.9 commandref: define section shortened, fullyUrl lists the image commands
 2026-11-09 0.3.8 commandref: favorites use the kiosk API key
 2026-11-09 0.3.7 commandref: minimum Immich API key permissions
 2026-11-08 0.3.6 default icon tablet for new devices
