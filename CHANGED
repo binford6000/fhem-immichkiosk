@@ -1,18 +1,7 @@
-2026-11-09 0.3.9 commandref: define section shortened, fullyUrl lists the image commands
-2026-11-09 0.3.8 commandref: favorites use the kiosk API key
-2026-11-09 0.3.7 commandref: minimum Immich API key permissions
-2026-11-08 0.3.6 default icon tablet for new devices
-2026-11-08 0.3.5 commandref: own entries for apiKey, kioskPassword, fullyPassword; anchors for all set commands
-2026-11-08 0.3.4 note on AI-assisted development
-2026-11-08 0.3.3 imageDuration: default documented, removed from example
-2026-11-08 0.3.2 commandref header in FHEM style
-2026-11-08 0.3.1 commandref: module, maintainer, forum and source
-2026-11-08 0.3.0 attribute layout replaces splitview (URL parameter + slide
-                 calculation for all kiosk layouts), square images handled
-2026-11-08 0.2.3 default cmdIcon, splitview documentation
-2026-11-08 0.2.2 removeFromFavorites, default webCmd, errors in lastError
-2026-11-08 0.2.1 German commandref, all readings documented, default room
-2026-11-08 0.2.0 splitview slide count, imageBuffer, rotationMax/Retry, resume,
-                 rotationProgress, albumOrder, albumExclude, prefix match and
-                 kiosk keywords in virtualAlbums, addToFavorites, click selectors
-2026-11-08 0.1.0 initial version
+2026-11-09 0.3.9 first public release
+                 - album selection via Immich API, kiosk URL parameters (no config changes)
+                 - virtual albums (album names with prefix match, IDs, kiosk keywords)
+                 - album rotation with slide calculation per layout (EXIF), resume after restart
+                 - Fully Kiosk Browser: start URL, nextImage, prevImage,
+                   addToFavorites, removeFromFavorites
+                 - secrets in KeyValueStore, commandref in English and German
