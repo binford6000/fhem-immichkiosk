@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.3.6";
+my $IK_VERSION = "0.3.7";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -725,6 +725,9 @@ sub ImmichKiosk_GetSecret {
       Reloads the album list from Immich.</li>
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich API key (Immich: Account Settings &rarr; API Keys). Required to read albums.
+      Minimum permissions: <code>album.read</code> (album list) and <code>asset.read</code>
+      (image orientation for the layout calculation; not needed with layout single or unset).
+      A separate key for this module is recommended, independent of the key used by immich-kiosk.
       Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
       Only needed if immich-kiosk is protected with a password (option <code>kiosk.password</code> in the
@@ -855,6 +858,9 @@ sub ImmichKiosk_GetSecret {
       L&auml;dt die Albumliste neu aus Immich.</li>
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich-API-Key (Immich: Kontoeinstellungen &rarr; API-Schl&uuml;ssel). Wird zum Einlesen der Alben ben&ouml;tigt.
+      Mindestberechtigungen: <code>album.read</code> (Albumliste) und <code>asset.read</code>
+      (Bildausrichtung f&uuml;r die Layout-Berechnung; bei layout single oder nicht gesetzt nicht n&ouml;tig).
+      Empfohlen ist ein eigener Key f&uuml;r das Modul, unabh&auml;ngig vom Key von immich-kiosk.
       Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
       Nur n&ouml;tig, wenn immich-kiosk mit einem Passwort gesch&uuml;tzt ist (Option <code>kiosk.password</code> in der

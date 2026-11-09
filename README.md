@@ -11,7 +11,7 @@ No SSH, no scripts on the kiosk host, no changes to `config.yaml`.
 
 ## Requirements
 
-- Immich with an API key (album read access)
+- Immich API key with permissions `album.read` and `asset.read` (the latter only for layout calculation)
 - immich-kiosk reachable from the display device
 - optional: Fully Kiosk Browser with Remote Admin enabled
 
