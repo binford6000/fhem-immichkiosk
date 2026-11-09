@@ -731,8 +731,8 @@ sub ImmichKiosk_GetSecret {
       with its own API key (kiosk config), not by this module.
       Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
-      Only needed if immich-kiosk is protected with a password (option <code>kiosk.password</code> in the
-      kiosk config). immich-kiosk then expects it as URL parameter password; the module appends it to the
+      Only needed if immich-kiosk is protected with a password (<code>password</code> option in the
+      kiosk config.yaml). immich-kiosk then expects it as URL parameter password; the module appends it to the
       URL sent to Fully. It is not shown in reading url.
       Stored in the FHEM KeyValueStore; without argument the value is deleted.</li>
     <li><a id="ImmichKiosk-set-fullyPassword"></a><code>fullyPassword &lt;pw&gt;</code><br>
@@ -867,8 +867,8 @@ sub ImmichKiosk_GetSecret {
       eigenen API-Key (Kiosk-Konfiguration) aus, nicht dieses Modul.
       Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
     <li><a id="ImmichKiosk-set-kioskPassword"></a><code>kioskPassword &lt;pw&gt;</code><br>
-      Nur n&ouml;tig, wenn immich-kiosk mit einem Passwort gesch&uuml;tzt ist (Option <code>kiosk.password</code> in der
-      Kiosk-Konfiguration). immich-kiosk erwartet es dann als URL-Parameter password; das Modul h&auml;ngt es an die
+      Nur n&ouml;tig, wenn immich-kiosk mit einem Passwort gesch&uuml;tzt ist (<code>password</code> Option in der
+      Kiosk config.yaml). immich-kiosk erwartet es dann als URL-Parameter password; das Modul h&auml;ngt es an die
       an Fully gesendete URL an. Im Reading url erscheint es nicht.
       Wird im FHEM-KeyValueStore gespeichert; ohne Argument wird der Wert gel&ouml;scht.</li>
     <li><a id="ImmichKiosk-set-fullyPassword"></a><code>fullyPassword &lt;pw&gt;</code><br>
