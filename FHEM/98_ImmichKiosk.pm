@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.4.0";
+my $IK_VERSION = "0.5.0";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -103,6 +103,8 @@ sub ImmichKiosk_Startup {
   # leave state "disabled" after the attribute was removed
   readingsSingleUpdate($hash, "state", ReadingsVal($name, "album", "defined"), 1)
     if (ReadingsVal($name, "state", "") eq "disabled");
+  # reading removed in 0.5.0 (identical to albumSlides)
+  readingsDelete($hash, "rotationSlides") if (defined(ReadingsVal($name, "rotationSlides", undef)));
   ImmichKiosk_StartTimers($hash);
   ImmichKiosk_LoadAlbums($hash);
   # continue a running rotation after restart; needs no Immich access while the current album is running
@@ -239,6 +241,11 @@ sub ImmichKiosk_Attr {
   if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude)$/ && $IK_RAW{$name}) {
     ImmichKiosk_BuildAlbums($hash, { $attr => $cmd eq "set" ? $val : "" });
   }
+  elsif ($attr =~ /^(layout|imageDuration|imageBuffer)$/ && $init_done) {
+    # recalculate albumSlides / albumDuration with the new value
+    RemoveInternalTimer($hash, "ImmichKiosk_StatsRefresh");
+    InternalTimer(gettimeofday() + 1, "ImmichKiosk_StatsRefresh", $hash);
+  }
   elsif ($attr =~ /^(albumRefreshInterval|progressInterval)$/ && $init_done) {
     # attribute value is applied after this function returns
     RemoveInternalTimer($hash, "ImmichKiosk_StartTimers");
@@ -298,7 +305,13 @@ sub ImmichKiosk_RereadCallback {
   readingsBulkUpdate($hash, "lastReread", TimeNow());
   readingsBulkUpdate($hash, "state", ReadingsVal($name, "album", "ready"));
   readingsEndUpdate($hash, 1);
-  $param->{next}->() if (ref($param->{next}) eq "CODE");
+  if (ref($param->{next}) eq "CODE") {
+    $param->{next}->();
+  }
+  else {
+    # picture count of the current album may have changed
+    ImmichKiosk_StatsRefresh($hash);
+  }
   return;
 }
 sub ImmichKiosk_BuildAlbums {
@@ -380,7 +393,8 @@ sub ImmichKiosk_LoadAlbums {
 # Album selection / URL
 ##############################################################################
 sub ImmichKiosk_SelectAlbum {
-  my ($hash, $album, $fromRotation) = @_;
+  # $stats: [pictures, slides] already calculated by the rotation
+  my ($hash, $album, $fromRotation, $stats) = @_;
   my $name = $hash->{NAME};
   ImmichKiosk_LoadAlbums($hash);
   my $e = $hash->{helper}{albums}{$album};
@@ -393,11 +407,16 @@ sub ImmichKiosk_SelectAlbum {
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash, "album", $album);
   readingsBulkUpdate($hash, "albumId", join(",", @{$e->{ids}}));
-  readingsBulkUpdate($hash, "albumPictures", $e->{count} // "-");
   readingsBulkUpdate($hash, "url", ImmichKiosk_BuildUrl($hash, $e->{ids}, 0));
   readingsBulkUpdate($hash, "state", $album);
   readingsEndUpdate($hash, 1);
   Log3($name, 3, "$name: loading album $album");
+  if ($stats) {
+    ImmichKiosk_StatsUpdate($hash, $album, @{$stats});
+  }
+  else {
+    ImmichKiosk_Stats($hash, $album, sub { ImmichKiosk_StatsUpdate($hash, $album, @_) });
+  }
   return ImmichKiosk_SendUrl($hash, $e->{ids});
 }
 sub ImmichKiosk_BuildUrl {
@@ -509,44 +528,62 @@ sub ImmichKiosk_RotateNext {
     $pos = $dir > 0 ? -1 : 0 if (!defined($pos));
     $n = $real[($pos + $dir) % @real];
   }
-  my $e   = $hash->{helper}{albums}{$n};
-  my $layout = AttrVal($name, "layout", "single");
-  my $ctx = { album => $n, keep => $keep, gen => $gen, count => $e->{count}, layout => $layout,
-              land => 0, port => 0, square => 0, page => 1 };
-  # single: every asset is one slide, no EXIF query needed
-  return ImmichKiosk_RotateApply($hash, $ctx, $e->{count}) if ($layout eq "single");
-  ImmichKiosk_SlidesFetch($hash, $ctx, $e->{ids}[0]);
+  ImmichKiosk_Stats($hash, $n, sub { ImmichKiosk_RotateApply($hash, { album => $n, keep => $keep, gen => $gen }, @_) });
   return;
 }
-sub ImmichKiosk_SlidesFetch {
-  my ($hash, $ctx, $id) = @_;
-  my $key  = ImmichKiosk_GetSecret($hash, "apiKey") // "";
-  my $body = JSON::PP->new->encode({ albumIds => [$id], type => "IMAGE", withExif => JSON::PP::true(),
-                                     size => 1000, page => 0 + $ctx->{page} });
+##############################################################################
+# Album statistics: pictures, slides (per layout), duration
+##############################################################################
+sub ImmichKiosk_Stats {
+  # calls $cb->(pictures, slides); undef = unknown
+  my ($hash, $album, $cb) = @_;
+  my $name   = $hash->{NAME};
+  my $e      = $hash->{helper}{albums}{$album} // return $cb->(undef, undef);
+  my $layout = AttrVal($name, "layout", "single");
+  my @ids    = @{$e->{ids}};
+  my $fav    = (@ids == 1 && $ids[0] eq "favorites") ? 1 : 0;
+  # other kiosk keywords (all, owned, shared): would require counting the whole library
+  return $cb->(undef, undef) if (!$fav && $IK_SPECIAL{$ids[0]});
+  # single: every asset is one slide, no EXIF query needed
+  return $cb->($e->{count}, $e->{count}) if (!$fav && $layout eq "single");
+  my $ctx = { album => $album, layout => $layout, cb => $cb, count => $e->{count}, fav => $fav,
+              ids => $fav ? [undef] : [@ids], land => 0, port => 0, square => 0, page => 1 };
+  ImmichKiosk_StatsFetch($hash, $ctx);
+  return;
+}
+sub ImmichKiosk_StatsFetch {
+  my ($hash, $ctx) = @_;
+  my $key = ImmichKiosk_GetSecret($hash, "apiKey") // "";
+  my %q   = (type => "IMAGE", withExif => JSON::PP::true(), size => 1000, page => 0 + $ctx->{page});
+  if ($ctx->{fav}) {
+    $q{isFavorite} = JSON::PP::true();
+  }
+  else {
+    # one album per query: several albumIds would only match assets contained in all of them
+    $q{albumIds} = [ $ctx->{ids}[0] ];
+  }
   HttpUtils_NonblockingGet({
     url      => "$hash->{IMMICH_URL}/api/search/metadata",
     method   => "POST",
-    data     => $body,
+    data     => JSON::PP->new->encode(\%q),
     timeout  => 15,
     header   => "x-api-key: $key\r\nContent-Type: application/json\r\nAccept: application/json",
     hash     => $hash,
     ctx      => $ctx,
-    albumId  => $id,
-    callback => \&ImmichKiosk_SlidesParse,
+    callback => \&ImmichKiosk_StatsParse,
   });
   return;
 }
-sub ImmichKiosk_SlidesParse {
+sub ImmichKiosk_StatsParse {
   my ($param, $err, $data) = @_;
   my $hash  = $param->{hash};
   my $ctx   = $param->{ctx};
-  my $name  = $hash->{NAME};
   my $res   = (!$err && ($param->{code} // 0) == 200) ? eval { JSON::PP::decode_json($data) } : undef;
   my $items = (ref($res) eq "HASH" && ref($res->{assets}) eq "HASH") ? $res->{assets}{items} : undef;
   if (ref($items) ne "ARRAY") {
     my $msg = ($err || ($param->{code} // 0) != 200) ? ImmichKiosk_HttpMsg($param, $err, $data, "asset.read") : "invalid response";
     ImmichKiosk_Error($hash, "Immich", "image formats for $ctx->{album} not available ($msg), using asset count");
-    return ImmichKiosk_RotateApply($hash, $ctx, $ctx->{count});
+    return $ctx->{cb}->($ctx->{count}, $ctx->{count});
   }
   for my $as (@{$items}) {
     my $e = ref($as->{exifInfo}) eq "HASH" ? $as->{exifInfo} : {};
@@ -567,7 +604,13 @@ sub ImmichKiosk_SlidesParse {
   my $next = $res->{assets}{nextPage};
   if (defined($next) && $next ne "") {
     $ctx->{page} = $next;
-    return ImmichKiosk_SlidesFetch($hash, $ctx, $param->{albumId});
+    return ImmichKiosk_StatsFetch($hash, $ctx);
+  }
+  # next album of a virtual album
+  shift(@{$ctx->{ids}});
+  if (@{$ctx->{ids}}) {
+    $ctx->{page} = 1;
+    return ImmichKiosk_StatsFetch($hash, $ctx);
   }
   my ($l, $p, $q) = @{$ctx}{qw(land port square)};
   my %slides = (
@@ -579,37 +622,68 @@ sub ImmichKiosk_SlidesParse {
     "splitview-landscape" => $p + $q + int(($l + 1) / 2),
   );
   my $slides = $slides{$ctx->{layout}} // ($l + $p + $q);
-  Log3($name, 4, "$name: $ctx->{album}: landscape $l, portrait $p, square/unknown $q, layout $ctx->{layout} -> $slides slides");
-  return ImmichKiosk_RotateApply($hash, $ctx, $slides);
+  Log3($hash->{NAME}, 4, "$hash->{NAME}: $ctx->{album}: landscape $l, portrait $p, square/unknown $q, layout $ctx->{layout} -> $slides slides");
+  # favorites: number of favorite images; albums: asset count from Immich
+  return $ctx->{cb}->($ctx->{fav} ? $l + $p + $q : $ctx->{count}, $slides);
+}
+sub ImmichKiosk_Secs {
+  my ($hash, $slides) = @_;
+  my $name = $hash->{NAME};
+  return $slides * (AttrVal($name, "imageDuration", 60) + AttrVal($name, "imageBuffer", 0));
+}
+sub ImmichKiosk_FmtDur {
+  my ($secs) = @_;
+  # HH:MM, hours may exceed 24
+  return sprintf("%02d:%02d", int($secs / 3600), int($secs % 3600 / 60));
+}
+sub ImmichKiosk_StatsUpdate {
+  my ($hash, $album, $pics, $slides) = @_;
+  my $name = $hash->{NAME};
+  # album changed in the meantime
+  return if (ReadingsVal($name, "album", "") ne $album);
+  readingsBeginUpdate($hash);
+  readingsBulkUpdate($hash, "albumPictures", $pics // "-");
+  readingsBulkUpdate($hash, "albumSlides", $slides // "-");
+  readingsBulkUpdate($hash, "albumDuration", defined($slides) ? ImmichKiosk_FmtDur(ImmichKiosk_Secs($hash, $slides)) : "-");
+  readingsEndUpdate($hash, 1);
+  return;
+}
+sub ImmichKiosk_StatsRefresh {
+  my ($hash) = @_;
+  my $album = ReadingsVal($hash->{NAME}, "album", "");
+  return if ($album eq "" || !$hash->{helper}{albums}{$album});
+  ImmichKiosk_Stats($hash, $album, sub { ImmichKiosk_StatsUpdate($hash, $album, @_) });
+  return;
 }
 sub ImmichKiosk_RotateApply {
-  my ($hash, $ctx, $slides) = @_;
+  my ($hash, $ctx, $pics, $slides) = @_;
   my $name = $hash->{NAME};
   my $n    = $ctx->{album};
   # stopped or superseded in the meantime
   return if ($ctx->{gen} != $hash->{helper}{rotGen} || ReadingsVal($name, "rotation", "off") ne "on");
-  $slides = 1 if (!$slides || $slides < 1);
-  my $secs = $slides * (AttrVal($name, "imageDuration", 60) + AttrVal($name, "imageBuffer", 0));
+  my $s    = (!$slides || $slides < 1) ? 1 : $slides;
+  my $secs = ImmichKiosk_Secs($hash, $s);
   my $max  = AttrVal($name, "rotationMax", 0);
   $secs = $max if ($max && $secs > $max);
   my $ts  = int(time() + $secs);
-  # duration as HH:MM (hours may exceed 24)
-  my $dur = sprintf("%02d:%02d", int($secs / 3600), int($secs % 3600 / 60));
+  my $dur = ImmichKiosk_FmtDur($secs);
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash, ".rotationLast", $n);
   readingsBulkUpdate($hash, ".rotationStartTs", int(time()));
   readingsBulkUpdate($hash, ".rotationUntilTs", $ts);
   readingsBulkUpdate($hash, "rotationAlbum", $n);
-  readingsBulkUpdate($hash, "rotationSlides", $slides);
   readingsBulkUpdate($hash, "rotationUntil", substr(FmtTime($ts), 0, 5));
   readingsBulkUpdate($hash, "rotationDuration", $dur);
   readingsBulkUpdate($hash, "rotationProgress", 0);
-  # album kept: refresh picture count only
-  readingsBulkUpdate($hash, "albumPictures", $ctx->{count} // "-") if ($ctx->{keep});
   readingsEndUpdate($hash, 1);
   ImmichKiosk_RotateAt($hash, $ts);
-  ImmichKiosk_SelectAlbum($hash, $n, 1) if (!$ctx->{keep});
-  Log3($name, 3, "$name: rotation - $n ($slides slides, $dur) until " . FmtDateTime($ts) . ($ctx->{keep} ? " (current album)" : ""));
+  if ($ctx->{keep}) {
+    ImmichKiosk_StatsUpdate($hash, $n, $pics, $slides);
+  }
+  else {
+    ImmichKiosk_SelectAlbum($hash, $n, 1, [ $pics, $slides ]);
+  }
+  Log3($name, 3, "$name: rotation - $n ($s slides, $dur) until " . FmtDateTime($ts) . ($ctx->{keep} ? " (current album)" : ""));
   return;
 }
 sub ImmichKiosk_ProgressTimer {
@@ -779,7 +853,7 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich API key (Immich: Account Settings &rarr; API Keys). Required to read albums.
       Minimum permissions: <code>album.read</code> (album list) and <code>asset.read</code>
-      (image orientation for the layout calculation; not needed with layout single or unset).
+      (image orientation for the layout calculation and picture count of favorites).
       A separate key for this module is recommended, independent of the key used by immich-kiosk.
       No write permissions are needed: addToFavorites / removeFromFavorites are executed by immich-kiosk
       with its own API key (kiosk config), not by this module.
@@ -816,7 +890,7 @@ sub ImmichKiosk_GetSecret {
       Additional time per slide for transitions and loading. Default: 0.</li>
     <li><a id="ImmichKiosk-attr-layout"></a><code>layout single|portrait|landscape|splitview|splitview-landscape</code><br>
       Kiosk layout. Passed as URL parameter layout and used to calculate the number of slides per album
-      (rotationSlides, rotationDuration, rotationUntil). Image orientation is determined via EXIF from Immich:
+      (albumSlides, albumDuration, rotationDuration, rotationUntil). Image orientation is determined via EXIF from Immich:
       <ul>
         <li>single: every asset is one slide</li>
         <li>portrait / landscape: only portrait / landscape images</li>
@@ -860,7 +934,11 @@ sub ImmichKiosk_GetSecret {
       Deleted again after the next successful request to the same source.</li>
     <li><code>album</code> - selected album</li>
     <li><code>albumId</code> - Immich album ID(s) or kiosk keyword of the selected album</li>
-    <li><code>albumPictures</code> - number of assets of the selected album (- for kiosk keywords)</li>
+    <li><code>albumPictures</code> - number of assets of the selected album; favorites: number of favorite images;
+      - for the kiosk keywords all, owned, shared</li>
+    <li><code>albumSlides</code> - number of slides of the selected album according to layout</li>
+    <li><code>albumDuration</code> - time (HH:MM) to show all slides of the selected album once:
+      albumSlides &times; (imageDuration + imageBuffer); independent of rotation</li>
     <li><code>albumList</code> - all selectable albums in list order</li>
     <li><code>albumCount</code> - number of selectable albums</li>
     <li><code>url</code> - kiosk URL of the selected album, without password</li>
@@ -868,9 +946,9 @@ sub ImmichKiosk_GetSecret {
     <li><code>lastCommand</code> - last command sent to Fully (nextImage, prevImage, addToFavorites, removeFromFavorites)</li>
     <li><code>rotation</code> - on | off</li>
     <li><code>rotationAlbum</code> - album currently shown by the rotation</li>
-    <li><code>rotationSlides</code> - number of slides of the rotation album</li>
     <li><code>rotationUntil</code> - time (HH:MM) of the next album change, - if off</li>
-    <li><code>rotationDuration</code> - display time of the rotation album (HH:MM), - if off</li>
+    <li><code>rotationDuration</code> - effective display time of the rotation album (HH:MM): albumDuration,
+      limited by rotationMax; - if off</li>
     <li><code>rotationProgress</code> - progress of the rotation album in percent (0-100)</li>
     <li>hidden: <code>.albumData</code> - JSON with all albums incl. original Immich names (label),
       e.g. for menus; <code>.rotationLast</code>, <code>.rotationStartTs</code>,
@@ -917,7 +995,7 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich-API-Key (Immich: Kontoeinstellungen &rarr; API-Schl&uuml;ssel). Wird zum Einlesen der Alben ben&ouml;tigt.
       Mindestberechtigungen: <code>album.read</code> (Albumliste) und <code>asset.read</code>
-      (Bildausrichtung f&uuml;r die Layout-Berechnung; bei layout single oder nicht gesetzt nicht n&ouml;tig).
+      (Bildausrichtung f&uuml;r die Layout-Berechnung und Bildanzahl der Favoriten).
       Empfohlen ist ein eigener Key f&uuml;r das Modul, unabh&auml;ngig vom Key von immich-kiosk.
       Schreibrechte sind nicht n&ouml;tig: addToFavorites / removeFromFavorites f&uuml;hrt immich-kiosk mit seinem
       eigenen API-Key (Kiosk-Konfiguration) aus, nicht dieses Modul.
@@ -954,7 +1032,7 @@ sub ImmichKiosk_GetSecret {
       Zuschlag pro Slide f&uuml;r &Uuml;bergang und Ladezeit. Standard: 0.</li>
     <li><a id="ImmichKiosk-attr-layout"></a><code>layout single|portrait|landscape|splitview|splitview-landscape</code><br>
       Kiosk-Layout. Wird als URL-Parameter layout &uuml;bergeben und f&uuml;r die Berechnung der Slides je Album
-      genutzt (rotationSlides, rotationDuration, rotationUntil). Die Bildausrichtung wird per EXIF aus Immich ermittelt:
+      genutzt (albumSlides, albumDuration, rotationDuration, rotationUntil). Die Bildausrichtung wird per EXIF aus Immich ermittelt:
       <ul>
         <li>single: jedes Bild ist eine Slide</li>
         <li>portrait / landscape: nur Hoch- / Querformat-Bilder</li>
@@ -999,7 +1077,11 @@ sub ImmichKiosk_GetSecret {
       Wird nach der n&auml;chsten erfolgreichen Anfrage an dieselbe Quelle wieder gel&ouml;scht.</li>
     <li><code>album</code> - gew&auml;hltes Album</li>
     <li><code>albumId</code> - Immich-Album-ID(s) oder Kiosk-Schl&uuml;sselwort des gew&auml;hlten Albums</li>
-    <li><code>albumPictures</code> - Bildanzahl des gew&auml;hlten Albums (- bei Kiosk-Schl&uuml;sselw&ouml;rtern)</li>
+    <li><code>albumPictures</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten: Anzahl der Favoriten-Bilder;
+      - bei den Kiosk-Schl&uuml;sselw&ouml;rtern all, owned, shared</li>
+    <li><code>albumSlides</code> - Anzahl Slides des gew&auml;hlten Albums gem&auml;&szlig; layout</li>
+    <li><code>albumDuration</code> - Dauer (HH:MM), bis alle Slides des gew&auml;hlten Albums einmal gezeigt wurden:
+      albumSlides &times; (imageDuration + imageBuffer); unabh&auml;ngig von der Rotation</li>
     <li><code>albumList</code> - alle w&auml;hlbaren Alben in Listenreihenfolge</li>
     <li><code>albumCount</code> - Anzahl der w&auml;hlbaren Alben</li>
     <li><code>url</code> - Kiosk-URL des gew&auml;hlten Albums, ohne Passwort</li>
@@ -1007,9 +1089,9 @@ sub ImmichKiosk_GetSecret {
     <li><code>lastCommand</code> - letzter an Fully gesendeter Befehl (nextImage, prevImage, addToFavorites, removeFromFavorites)</li>
     <li><code>rotation</code> - on | off</li>
     <li><code>rotationAlbum</code> - von der Rotation aktuell gezeigtes Album</li>
-    <li><code>rotationSlides</code> - Anzahl Slides des Rotationsalbums</li>
     <li><code>rotationUntil</code> - Uhrzeit (HH:MM) des n&auml;chsten Albumwechsels, - wenn aus</li>
-    <li><code>rotationDuration</code> - Anzeigedauer des Rotationsalbums (HH:MM), - wenn aus</li>
+    <li><code>rotationDuration</code> - tats&auml;chliche Anzeigedauer des Rotationsalbums (HH:MM): albumDuration,
+      begrenzt durch rotationMax; - wenn aus</li>
     <li><code>rotationProgress</code> - Fortschritt des Rotationsalbums in Prozent (0-100)</li>
     <li>versteckt: <code>.albumData</code> - JSON mit allen Alben inkl. Original-Immich-Namen (label),
       z.B. f&uuml;r Men&uuml;s; <code>.rotationLast</code>, <code>.rotationStartTs</code>,

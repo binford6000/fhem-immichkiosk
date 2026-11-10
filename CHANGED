@@ -1,3 +1,7 @@
+2026-11-10 0.5.0 new readings albumSlides and albumDuration (independent of rotation)
+                 albumPictures is updated on every reread and counts favorites
+                 virtual albums: slides are calculated over all member albums
+                 removed reading rotationSlides (identical to albumSlides)
 2026-11-09 0.4.0 error handling: URL check in define, clear messages for missing/invalid
                  apiKey, missing permissions, connection errors and wrong fullyPassword,
                  lastError is deleted after success
