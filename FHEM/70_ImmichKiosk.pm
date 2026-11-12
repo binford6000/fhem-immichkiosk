@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.5";
+my $IK_VERSION = "0.5.6";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -249,6 +249,11 @@ sub ImmichKiosk_Attr {
   # list-relevant attributes: rebuild with the new value (it is applied after this function returns)
   if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude)$/ && $IK_RAW{$name}) {
     ImmichKiosk_BuildAlbums($hash, { $attr => $cmd eq "set" ? $val : "" });
+    if ($attr eq "virtualAlbums" && $init_done) {
+      # the current album may be a changed virtual album
+      RemoveInternalTimer($hash, "ImmichKiosk_CurrentChanged");
+      InternalTimer(gettimeofday() + 1, "ImmichKiosk_CurrentChanged", $hash);
+    }
   }
   elsif ($attr =~ /^(layout|imageDuration|imageBuffer)$/ && $init_done) {
     # recalculate albumSlides / albumDuration with the new value
@@ -669,6 +674,25 @@ sub ImmichKiosk_StatsUpdate {
   readingsBulkUpdate($hash, "albumSlides", $slides // "-");
   readingsBulkUpdate($hash, "albumDuration", defined($slides) ? ImmichKiosk_FmtDur(ImmichKiosk_Secs($hash, $slides)) : "-");
   readingsEndUpdate($hash, 1);
+  return;
+}
+sub ImmichKiosk_CurrentChanged {
+  my ($hash) = @_;
+  my $name  = $hash->{NAME};
+  my $album = ReadingsVal($name, "album", "");
+  my $e     = $hash->{helper}{albums}{$album};
+  if ($album ne "" && !$e) {
+    Log3($name, 3, "$name: current album $album no longer exists");
+    return;
+  }
+  return if (!$e);
+  # members changed: update albumId, url and display (no rotation stop, rotation never shows virtual albums)
+  if (join(",", @{$e->{ids}}) ne ReadingsVal($name, "albumId", "")) {
+    Log3($name, 3, "$name: members of current album $album changed, reloading");
+    ImmichKiosk_SelectAlbum($hash, $album, 1);
+    return;
+  }
+  ImmichKiosk_StatsRefresh($hash);
   return;
 }
 sub ImmichKiosk_StatsRefresh {
