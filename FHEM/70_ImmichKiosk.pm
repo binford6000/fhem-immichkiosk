@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.4";
+my $IK_VERSION = "0.5.5";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -100,6 +100,7 @@ sub ImmichKiosk_Startup {
   my ($hash) = @_;
   my $name = $hash->{NAME};
   return if (IsDisabled($name));
+  Log3($name, 4, "$name: startup, rotation " . ReadingsVal($name, "rotation", "off"));
   # leave state "disabled" after the attribute was removed
   readingsSingleUpdate($hash, "state", ReadingsVal($name, "album", "defined"), 1)
     if (ReadingsVal($name, "state", "") eq "disabled");
@@ -135,6 +136,7 @@ sub ImmichKiosk_StartTimers {
   InternalTimer(gettimeofday() + $ri, "ImmichKiosk_RefreshTimer", $hash) if ($ri > 0);
   my $pi = AttrVal($name, "progressInterval", 300);
   InternalTimer(gettimeofday() + $pi, "ImmichKiosk_ProgressTimer", $hash) if ($pi > 0);
+  Log3($name, 4, "$name: timers: album refresh " . ($ri > 0 ? "every ${ri}s" : "off") . ", progress " . ($pi > 0 ? "every ${pi}s" : "off"));
   return;
 }
 sub ImmichKiosk_RefreshTimer {
@@ -150,6 +152,9 @@ sub ImmichKiosk_RefreshTimer {
 sub ImmichKiosk_Set {
   my ($hash, $name, $cmd, @args) = @_;
   return "\"set $name\" needs at least one argument" if (!defined($cmd));
+  # secrets are never logged
+  Log3($name, 4, "$name: set $cmd " . ($cmd =~ /^(apiKey|kioskPassword|fullyPassword)$/ ? (@args ? "***" : "(delete)") : join(" ", @args)))
+    if ($cmd ne "?");
   ImmichKiosk_LoadAlbums($hash);
   my @usage = ("album:" . join(",", @{$hash->{helper}{order} // []}), "nextAlbum:noArg", "prevAlbum:noArg",
                "rotation:on,off", "reread:noArg", "apiKey", "kioskPassword", "fullyPassword");
@@ -203,6 +208,7 @@ sub ImmichKiosk_Set {
 sub ImmichKiosk_Get {
   my ($hash, $name, $cmd, @args) = @_;
   return "\"get $name\" needs at least one argument" if (!defined($cmd));
+  Log3($name, 4, "$name: get $cmd") if ($cmd ne "?");
   if ($cmd eq "albums") {
     ImmichKiosk_LoadAlbums($hash);
     my $a = $hash->{helper}{albums} // {};
@@ -218,6 +224,7 @@ sub ImmichKiosk_Get {
 sub ImmichKiosk_Attr {
   my ($cmd, $name, $attr, $val) = @_;
   my $hash = $defs{$name};
+  Log3($name, 4, "$name: attr $cmd $attr" . ($cmd eq "set" ? " $val" : ""));
   if ($cmd eq "set") {
     my %int = (imageDuration => 1, imageBuffer => 0, rotationMax => 0, rotationRetry => 30,
                progressInterval => 0, albumRefreshInterval => 0);
@@ -275,7 +282,7 @@ sub ImmichKiosk_Reread {
   return if (IsDisabled($name));
   my $key = ImmichKiosk_GetSecret($hash, "apiKey");
   return ImmichKiosk_Error($hash, "Immich", "apiKey not set - set $name apiKey <key>") if (!$key);
-  HttpUtils_NonblockingGet({
+  ImmichKiosk_Http($hash, {
     url      => "$hash->{IMMICH_URL}/api/albums",
     timeout  => 10,
     method   => "GET",
@@ -321,12 +328,18 @@ sub ImmichKiosk_BuildAlbums {
   my $name = $hash->{NAME};
   my $av   = sub { exists($ov->{$_[0]}) ? $ov->{$_[0]} : AttrVal($name, $_[0], $_[1]) };
   my %excl = map { $_ => 1 } split(/[\s,]+/, $av->("albumExclude", ""));
-  my %albums;
+  my (%albums, @empty, @excluded);
   for my $al (@{$IK_RAW{$name} // []}) {
     # skip empty albums
-    next if (!$al->{assetCount} || !$al->{id});
+    if (!$al->{assetCount} || !$al->{id}) {
+      push(@empty, $al->{albumName} // "?");
+      next;
+    }
     my $n = ImmichKiosk_CleanName($al->{albumName});
-    next if ($n eq "" || $excl{$n});
+    if ($n eq "" || $excl{$n}) {
+      push(@excluded, $n eq "" ? ($al->{albumName} // "?") : $n);
+      next;
+    }
     my ($base, $i) = ($n, 2);
     while (exists($albums{$n})) {
       $n = "$base-$i";
@@ -365,8 +378,11 @@ sub ImmichKiosk_BuildAlbums {
       }
     }
     Log3($name, 3, "$name: virtual album $vname - not found: @miss") if (@miss);
+    Log3($name, 4, "$name: virtual album $vname: " . scalar(@ids) . " album(s), $count images");
     $albums{$vname} = { ids => \@ids, count => $count, label => $vname, virtual => 1 } if (@ids);
   }
+  Log3($name, 4, "$name: albums: " . scalar(@{$IK_RAW{$name} // []}) . " from Immich, " . scalar(keys %albums) . " selectable"
+               . (@empty ? ", empty: " . join(",", @empty) : "") . (@excluded ? ", excluded/unnamed: " . join(",", @excluded) : ""));
   # pinned albums first (attribute order), rest alphabetical
   my @pinned = grep { exists($albums{$_}) } split(/[\s,]+/, $av->("albumOrder", ""));
   my %pin    = map { $_ => 1 } @pinned;
@@ -453,6 +469,7 @@ sub ImmichKiosk_SendUrl {
 sub ImmichKiosk_Rotate {
   my ($hash, $cmd) = @_;
   my $name = $hash->{NAME};
+  Log3($name, 4, "$name: rotation $cmd");
   if ($cmd eq "stop") {
     RemoveInternalTimer($hash, "ImmichKiosk_RotateTimer");
     # invalidate pending asynchronous rotation steps
@@ -489,6 +506,7 @@ sub ImmichKiosk_Rotate {
 }
 sub ImmichKiosk_RotateAt {
   my ($hash, $ts) = @_;
+  Log3($hash->{NAME}, 4, "$hash->{NAME}: rotation timer set to " . FmtDateTime($ts));
   RemoveInternalTimer($hash, "ImmichKiosk_RotateTimer");
   InternalTimer($ts, "ImmichKiosk_RotateTimer", $hash);
   return;
@@ -530,6 +548,8 @@ sub ImmichKiosk_RotateNext {
     $pos = $dir > 0 ? -1 : 0 if (!defined($pos));
     $n = $real[($pos + $dir) % @real];
   }
+  Log3($name, 4, "$name: rotation list (" . scalar(@real) . "): " . join(",", @real) . "; current $cur, last "
+               . ReadingsVal($name, ".rotationLast", "-") . ", direction $dir -> $n" . ($keep ? " (kept)" : ""));
   ImmichKiosk_Stats($hash, $n, sub { ImmichKiosk_RotateApply($hash, { album => $n, keep => $keep, gen => $gen }, @_) });
   return;
 }
@@ -564,7 +584,7 @@ sub ImmichKiosk_StatsFetch {
     # one album per query: several albumIds would only match assets contained in all of them
     $q{albumIds} = [ $ctx->{ids}[0] ];
   }
-  HttpUtils_NonblockingGet({
+  ImmichKiosk_Http($hash, {
     url      => "$hash->{IMMICH_URL}/api/search/metadata",
     method   => "POST",
     data     => JSON::PP->new->encode(\%q),
@@ -641,6 +661,7 @@ sub ImmichKiosk_FmtDur {
 sub ImmichKiosk_StatsUpdate {
   my ($hash, $album, $images, $slides) = @_;
   my $name = $hash->{NAME};
+  Log3($name, 4, "$name: $album: images " . ($images // "-") . ", slides " . ($slides // "-"));
   # album changed in the meantime
   return if (ReadingsVal($name, "album", "") ne $album);
   readingsBeginUpdate($hash);
@@ -703,6 +724,7 @@ sub ImmichKiosk_ProgressTimer {
       $p = 100 if ($p > 100);
     }
   }
+  Log3($name, 5, "$name: rotation progress $p%");
   readingsSingleUpdate($hash, "rotationProgress", $p, 1) if (ReadingsVal($name, "rotationProgress", "") ne $p);
   return;
 }
@@ -719,7 +741,7 @@ sub ImmichKiosk_Fully {
   return ImmichKiosk_Error($hash, "Fully", "fullyPassword not set - set $name fullyPassword <pw>") if ($pw eq "");
   my $q  = "cmd=$cmd&type=json&password=" . ImmichKiosk_UrlEnc($pw);
   $q .= "&$_=" . ImmichKiosk_UrlEnc($args->{$_}) for (sort keys %{$args});
-  HttpUtils_NonblockingGet({
+  ImmichKiosk_Http($hash, {
     url      => "$base/?$q",
     hideurl  => 1,
     timeout  => 10,
@@ -796,6 +818,49 @@ sub ImmichKiosk_HttpMsg {
   return "HTTP 401 - apiKey invalid$detail" if ($code == 401);
   return "HTTP 403 - apiKey lacks permission $perm$detail" if ($code == 403);
   return "HTTP $code$detail";
+}
+sub ImmichKiosk_Http {
+  my ($hash, $param) = @_;
+  my $name = $hash->{NAME};
+  my $cb   = $param->{callback};
+  # HttpUtils logs URL and request header (incl. x-api-key) at loglevel+1 under the global verbose: keep secrets out of the log
+  $param->{loglevel} = 6;
+  $param->{ikStart}  = gettimeofday();
+  $param->{callback} = sub {
+    my ($p, $err, $data) = @_;
+    ImmichKiosk_LogMasked($hash, 4, sprintf("response %s: %s, %.2fs, %d bytes", $p->{url},
+      $err ? "error $err" : "HTTP " . ($p->{code} // "?"), gettimeofday() - $p->{ikStart}, length($data // "")));
+    ImmichKiosk_LogMasked($hash, 5, "response body: " . ImmichKiosk_Trunc($data));
+    $cb->($p, $err, $data);
+  };
+  ImmichKiosk_LogMasked($hash, 4, "request " . ($param->{method} // "GET") . " $param->{url}");
+  ImmichKiosk_LogMasked($hash, 5, "request body: $param->{data}") if (defined($param->{data}));
+  HttpUtils_NonblockingGet($param);
+  return;
+}
+sub ImmichKiosk_LogMasked {
+  my ($hash, $lvl, $msg) = @_;
+  my $name = $hash->{NAME};
+  # check the level first: masking reads the KeyValueStore
+  return if ($lvl > AttrVal($name, "verbose", AttrVal("global", "verbose", 3)));
+  for my $k (qw(apiKey kioskPassword fullyPassword)) {
+    my $v = ImmichKiosk_GetSecret($hash, $k);
+    next if (!defined($v) || $v eq "");
+    # plain, URL-encoded and double-encoded (kiosk URL inside the Fully URL)
+    my $e1 = ImmichKiosk_UrlEnc($v);
+    my $e2 = ImmichKiosk_UrlEnc($e1);
+    $msg =~ s/\Q$_\E/***/g for ($v, $e1, $e2);
+  }
+  $msg =~ s/(password=)[^&\s:]*/$1***/gi;
+  $msg =~ s/(password%3D)(?:(?!%26)[^&\s])*/$1***/gi;
+  $msg =~ s/(x-api-key:\s*)\S+/$1***/gi;
+  Log3($name, $lvl, "$name: $msg");
+  return;
+}
+sub ImmichKiosk_Trunc {
+  my ($s) = @_;
+  $s //= "";
+  return length($s) > 500 ? substr($s, 0, 500) . "... (" . length($s) . " bytes)" : $s;
 }
 sub ImmichKiosk_UrlEnc {
   my ($s) = @_;
@@ -926,6 +991,13 @@ sub ImmichKiosk_GetSecret {
       Fully Kiosk Browser REST endpoint, e.g. <code>http://10.3.3.50:2323</code>.
       If set, the kiosk URL is stored as Fully start URL and loaded, and the commands nextImage, prevImage,
       addToFavorites and removeFromFavorites become available.</li>
+  </ul><br>
+  <b>Logging</b>
+  <ul>
+    <code>attr &lt;name&gt; verbose 4</code>: program flow (set/get/attr, requests with HTTP status and duration,
+    timers, rotation decisions, album list summary).<br>
+    <code>attr &lt;name&gt; verbose 5</code>: additionally request and response bodies (truncated to 500 characters).<br>
+    API key and passwords are always masked as ***, so logs can be posted as they are.
   </ul><br>
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>
@@ -1069,6 +1141,13 @@ sub ImmichKiosk_GetSecret {
       REST-Endpunkt des Fully Kiosk Browser, z.B. <code>http://10.3.3.50:2323</code>.
       Wenn gesetzt, wird die Kiosk-URL als Fully-Start-URL gespeichert und geladen, und die Befehle nextImage, prevImage,
       addToFavorites und removeFromFavorites stehen zur Verf&uuml;gung.</li>
+  </ul><br>
+  <b>Logging</b>
+  <ul>
+    <code>attr &lt;name&gt; verbose 4</code>: Programmablauf (set/get/attr, Anfragen mit HTTP-Status und Dauer,
+    Timer, Rotationsentscheidungen, Zusammenfassung der Albumliste).<br>
+    <code>attr &lt;name&gt; verbose 5</code>: zus&auml;tzlich Request- und Response-Bodies (gek&uuml;rzt auf 500 Zeichen).<br>
+    API-Key und Passw&ouml;rter werden immer als *** maskiert, Logs k&ouml;nnen also unver&auml;ndert gepostet werden.
   </ul><br>
   <a id="ImmichKiosk-readings"></a>
   <b>Readings</b>

@@ -1,3 +1,5 @@
+2026-11-12 0.5.5 logging: verbose 4 (flow, requests, timers, rotation decisions) and
+                 verbose 5 (request/response bodies); secrets are always masked
 2026-11-12 0.5.4 reading albumPictures renamed to albumImages (Immich terminology)
 2026-11-12 0.5.3 module renamed to 70_ImmichKiosk.pm (forum: Multimedia) - delete the old
                  FHEM/98_ImmichKiosk.pm (or FHEM/89_ImmichKiosk.pm) after the update
