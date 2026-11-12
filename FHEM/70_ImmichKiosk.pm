@@ -1049,7 +1049,7 @@ sub ImmichKiosk_GetSecret {
     <li><code>albumId</code> - Immich album ID(s) or kiosk keyword of the selected album</li>
     <li><code>albumImages</code> - number of assets of the selected album; favorites: number of favorite images;
       - for the kiosk keywords all, owned, shared</li>
-    <li><code>albumSlides</code> - number of slides of the selected album according to layout</li>
+    <li><code>albumSlides</code> - number of slides of the selected album according to attribute layout</li>
     <li><code>albumDuration</code> - time (HH:MM) to show all slides of the selected album once:
       albumSlides &times; (imageDuration + imageBuffer); independent of rotation</li>
     <li><code>albumList</code> - all selectable albums in list order</li>
@@ -1199,7 +1199,7 @@ sub ImmichKiosk_GetSecret {
     <li><code>albumId</code> - Immich-Album-ID(s) oder Kiosk-Schl&uuml;sselwort des gew&auml;hlten Albums</li>
     <li><code>albumImages</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten: Anzahl der Favoriten-Bilder;
       - bei den Kiosk-Schl&uuml;sselw&ouml;rtern all, owned, shared</li>
-    <li><code>albumSlides</code> - Anzahl Slides des gew&auml;hlten Albums gem&auml;&szlig; layout</li>
+    <li><code>albumSlides</code> - Anzahl Slides des gew&auml;hlten Albums gem&auml;&szlig; Attribut layout</li>
     <li><code>albumDuration</code> - Dauer (HH:MM), bis alle Slides des gew&auml;hlten Albums einmal gezeigt wurden:
       albumSlides &times; (imageDuration + imageBuffer); unabh&auml;ngig von der Rotation</li>
     <li><code>albumList</code> - alle w&auml;hlbaren Alben in Listenreihenfolge</li>
