@@ -1,5 +1,5 @@
-2026-11-12 0.5.1 module renamed to 70_ImmichKiosk.pm - delete the old FHEM/98_ImmichKiosk.pm
-                 after the update
+2026-11-12 0.5.2 module renamed to 89_ImmichKiosk.pm - delete the old FHEM/98_ImmichKiosk.pm
+                 (or FHEM/70_ImmichKiosk.pm) after the update
 2026-11-10 0.5.0 new readings albumSlides and albumDuration (independent of rotation)
                  albumPictures is updated on every reread and counts favorites
                  virtual albums: slides are calculated over all member albums

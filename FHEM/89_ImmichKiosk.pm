@@ -1,6 +1,6 @@
 # $Id$
 ##############################################################################
-# 70_ImmichKiosk.pm
+# 89_ImmichKiosk.pm
 # Controls immich-kiosk (https://github.com/damongolding/immich-kiosk) from FHEM
 # Note: this module was and is developed with AI assistance ("vibe coded", Claude by Anthropic).
 ##############################################################################
@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.1";
+my $IK_VERSION = "0.5.2";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -818,7 +818,7 @@ sub ImmichKiosk_GetSecret {
 =begin html
 
 <a id="ImmichKiosk"></a>
-<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
+<b>Module:</b> 89_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
 <h3>Immich Kiosk Control</h3>
 <ul>
   <u><b>ImmichKiosk - controls album selection and rotation of immich-kiosk</b></u><br>
@@ -960,7 +960,7 @@ sub ImmichKiosk_GetSecret {
 =begin html_DE
 
 <a id="ImmichKiosk"></a>
-<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
+<b>Module:</b> 89_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Unterst&uuml;tzende Dienste<br>
 <h3>Immich Kiosk Steuerung</h3>
 <ul>
   <u><b>ImmichKiosk - Steuert Albumauswahl und Rotation von immich-kiosk</b></u><br>
