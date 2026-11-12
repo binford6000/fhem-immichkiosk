@@ -13,6 +13,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Update $Id line
+        run: |
+          for f in FHEM/*.pm; do
+            b=$(basename "$f")
+            log=$(TZ=UTC git log --follow --format='%an|%cd' --date=format-local:'%Y-%m-%d %H:%M:%SZ' -- "$f" | grep -v '^github-actions')
+            rev=$(printf '%s\n' "$log" | grep -c .)
+            date=$(printf '%s\n' "$log" | head -1 | cut -d'|' -f2)
+            sed -i "1s/^# \$Id.*\$\$/# \$Id: $b $rev $date binford6000 \$/" "$f"
+            head -1 "$f"
+          done
       - name: Generate controls file
         run: |
           : > controls_immichkiosk.txt
@@ -26,6 +36,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add controls_immichkiosk.txt
+          git add controls_immichkiosk.txt FHEM/*.pm
           git diff --cached --quiet || git commit -m "controls: update [skip ci]"
           git push

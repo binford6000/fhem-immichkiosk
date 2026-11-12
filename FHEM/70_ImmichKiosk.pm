@@ -1,8 +1,23 @@
-# $Id$
+# $Id: 70_ImmichKiosk.pm 0 2026-11-12 15:40:00Z binford6000 $
 ##############################################################################
 # 70_ImmichKiosk.pm
 # Controls immich-kiosk (https://github.com/damongolding/immich-kiosk) from FHEM
 # Note: this module was and is developed with AI assistance ("vibe coded", Claude by Anthropic).
+#
+# Copyright (C) 2026 binford6000
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
 ##############################################################################
 package main;
 use strict;
@@ -10,7 +25,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.6";
+my $IK_VERSION = "0.5.7";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
