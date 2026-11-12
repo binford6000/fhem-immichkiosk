@@ -1,3 +1,4 @@
+2026-11-12 0.5.4 reading albumPictures renamed to albumImages (Immich terminology)
 2026-11-12 0.5.3 module renamed to 70_ImmichKiosk.pm (forum: Multimedia) - delete the old
                  FHEM/98_ImmichKiosk.pm (or FHEM/89_ImmichKiosk.pm) after the update
 2026-11-10 0.5.0 new readings albumSlides and albumDuration (independent of rotation)

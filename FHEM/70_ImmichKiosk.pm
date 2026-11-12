@@ -10,7 +10,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.3";
+my $IK_VERSION = "0.5.4";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -103,8 +103,10 @@ sub ImmichKiosk_Startup {
   # leave state "disabled" after the attribute was removed
   readingsSingleUpdate($hash, "state", ReadingsVal($name, "album", "defined"), 1)
     if (ReadingsVal($name, "state", "") eq "disabled");
-  # reading removed in 0.5.0 (identical to albumSlides)
-  readingsDelete($hash, "rotationSlides") if (defined(ReadingsVal($name, "rotationSlides", undef)));
+  # obsolete readings: rotationSlides (0.5.0, identical to albumSlides), albumPictures (0.5.4, now albumImages)
+  for my $r (qw(rotationSlides albumPictures)) {
+    readingsDelete($hash, $r) if (defined(ReadingsVal($name, $r, undef)));
+  }
   ImmichKiosk_StartTimers($hash);
   ImmichKiosk_LoadAlbums($hash);
   # continue a running rotation after restart; needs no Immich access while the current album is running
@@ -309,7 +311,7 @@ sub ImmichKiosk_RereadCallback {
     $param->{next}->();
   }
   else {
-    # picture count of the current album may have changed
+    # image count of the current album may have changed
     ImmichKiosk_StatsRefresh($hash);
   }
   return;
@@ -393,7 +395,7 @@ sub ImmichKiosk_LoadAlbums {
 # Album selection / URL
 ##############################################################################
 sub ImmichKiosk_SelectAlbum {
-  # $stats: [pictures, slides] already calculated by the rotation
+  # $stats: [images, slides] already calculated by the rotation
   my ($hash, $album, $fromRotation, $stats) = @_;
   my $name = $hash->{NAME};
   ImmichKiosk_LoadAlbums($hash);
@@ -532,10 +534,10 @@ sub ImmichKiosk_RotateNext {
   return;
 }
 ##############################################################################
-# Album statistics: pictures, slides (per layout), duration
+# Album statistics: images, slides (per layout), duration
 ##############################################################################
 sub ImmichKiosk_Stats {
-  # calls $cb->(pictures, slides); undef = unknown
+  # calls $cb->(images, slides); undef = unknown
   my ($hash, $album, $cb) = @_;
   my $name   = $hash->{NAME};
   my $e      = $hash->{helper}{albums}{$album} // return $cb->(undef, undef);
@@ -637,12 +639,12 @@ sub ImmichKiosk_FmtDur {
   return sprintf("%02d:%02d", int($secs / 3600), int($secs % 3600 / 60));
 }
 sub ImmichKiosk_StatsUpdate {
-  my ($hash, $album, $pics, $slides) = @_;
+  my ($hash, $album, $images, $slides) = @_;
   my $name = $hash->{NAME};
   # album changed in the meantime
   return if (ReadingsVal($name, "album", "") ne $album);
   readingsBeginUpdate($hash);
-  readingsBulkUpdate($hash, "albumPictures", $pics // "-");
+  readingsBulkUpdate($hash, "albumImages", $images // "-");
   readingsBulkUpdate($hash, "albumSlides", $slides // "-");
   readingsBulkUpdate($hash, "albumDuration", defined($slides) ? ImmichKiosk_FmtDur(ImmichKiosk_Secs($hash, $slides)) : "-");
   readingsEndUpdate($hash, 1);
@@ -656,7 +658,7 @@ sub ImmichKiosk_StatsRefresh {
   return;
 }
 sub ImmichKiosk_RotateApply {
-  my ($hash, $ctx, $pics, $slides) = @_;
+  my ($hash, $ctx, $images, $slides) = @_;
   my $name = $hash->{NAME};
   my $n    = $ctx->{album};
   # stopped or superseded in the meantime
@@ -678,10 +680,10 @@ sub ImmichKiosk_RotateApply {
   readingsEndUpdate($hash, 1);
   ImmichKiosk_RotateAt($hash, $ts);
   if ($ctx->{keep}) {
-    ImmichKiosk_StatsUpdate($hash, $n, $pics, $slides);
+    ImmichKiosk_StatsUpdate($hash, $n, $images, $slides);
   }
   else {
-    ImmichKiosk_SelectAlbum($hash, $n, 1, [ $pics, $slides ]);
+    ImmichKiosk_SelectAlbum($hash, $n, 1, [ $images, $slides ]);
   }
   Log3($name, 3, "$name: rotation - $n ($s slides, $dur) until " . FmtDateTime($ts) . ($ctx->{keep} ? " (current album)" : ""));
   return;
@@ -853,7 +855,7 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich API key (Immich: Account Settings &rarr; API Keys). Required to read albums.
       Minimum permissions: <code>album.read</code> (album list) and <code>asset.read</code>
-      (image orientation for the layout calculation and picture count of favorites).
+      (image orientation for the layout calculation and image count of favorites).
       A separate key for this module is recommended, independent of the key used by immich-kiosk.
       No write permissions are needed: addToFavorites / removeFromFavorites are executed by immich-kiosk
       with its own API key (kiosk config), not by this module.
@@ -934,7 +936,7 @@ sub ImmichKiosk_GetSecret {
       Deleted again after the next successful request to the same source.</li>
     <li><code>album</code> - selected album</li>
     <li><code>albumId</code> - Immich album ID(s) or kiosk keyword of the selected album</li>
-    <li><code>albumPictures</code> - number of assets of the selected album; favorites: number of favorite images;
+    <li><code>albumImages</code> - number of assets of the selected album; favorites: number of favorite images;
       - for the kiosk keywords all, owned, shared</li>
     <li><code>albumSlides</code> - number of slides of the selected album according to layout</li>
     <li><code>albumDuration</code> - time (HH:MM) to show all slides of the selected album once:
@@ -1077,7 +1079,7 @@ sub ImmichKiosk_GetSecret {
       Wird nach der n&auml;chsten erfolgreichen Anfrage an dieselbe Quelle wieder gel&ouml;scht.</li>
     <li><code>album</code> - gew&auml;hltes Album</li>
     <li><code>albumId</code> - Immich-Album-ID(s) oder Kiosk-Schl&uuml;sselwort des gew&auml;hlten Albums</li>
-    <li><code>albumPictures</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten: Anzahl der Favoriten-Bilder;
+    <li><code>albumImages</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten: Anzahl der Favoriten-Bilder;
       - bei den Kiosk-Schl&uuml;sselw&ouml;rtern all, owned, shared</li>
     <li><code>albumSlides</code> - Anzahl Slides des gew&auml;hlten Albums gem&auml;&szlig; layout</li>
     <li><code>albumDuration</code> - Dauer (HH:MM), bis alle Slides des gew&auml;hlten Albums einmal gezeigt wurden:
