@@ -924,7 +924,7 @@ sub ImmichKiosk_GetSecret {
 =begin html
 
 <a id="ImmichKiosk"></a>
-<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Multimedia<br>
+<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> <a href="https://forum.fhem.de/index.php?topic=145917.0">Multimedia</a><br>
 <h3>Immich Kiosk Control</h3>
 <ul>
   <u><b>ImmichKiosk - controls album selection and rotation of immich-kiosk</b></u><br>
@@ -1073,7 +1073,7 @@ sub ImmichKiosk_GetSecret {
 =begin html_DE
 
 <a id="ImmichKiosk"></a>
-<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> Multimedia<br>
+<b>Module:</b> 70_ImmichKiosk.pm <b>Maintainer:</b> binford6000 <b>Forum:</b> <a href="https://forum.fhem.de/index.php?topic=145917.0">Multimedia</a><br>
 <h3>Immich Kiosk Steuerung</h3>
 <ul>
   <u><b>ImmichKiosk - Steuert Albumauswahl und Rotation von immich-kiosk</b></u><br>

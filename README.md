@@ -35,3 +35,5 @@ set kiosk rotation on
 ```
 
 Full documentation: `help ImmichKiosk` in FHEM.
+
+Support and discussion: [FHEM Forum (Multimedia)](https://forum.fhem.de/index.php?topic=145917.0)
