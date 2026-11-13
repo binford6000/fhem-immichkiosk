@@ -25,7 +25,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.7";
+my $IK_VERSION = "0.5.9";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -51,8 +51,10 @@ sub ImmichKiosk_Initialize {
   $hash->{NotifyFn} = "ImmichKiosk_Notify";
   $hash->{AttrList} = "disable:0,1 imageDuration imageBuffer layout:single,portrait,landscape,splitview,splitview-landscape "
                     . "rotationExclude:textField-long rotationMax rotationRetry progressInterval "
-                    . "albumOrder:textField-long albumExclude:textField-long virtualAlbums:textField-long "
+                    . "albumOrder:textField-long albumExclude:textField-long virtualAlbums:textField-long albumLabels:textField-long "
                     . "albumRefreshInterval urlParams fullyUrl " . $readingFnAttributes;
+  # reload: VERSION of existing devices is otherwise only set in define
+  $_->{VERSION} = $IK_VERSION for (grep { ($_->{TYPE} // "") eq "ImmichKiosk" } values %defs);
   return;
 }
 ##############################################################################
@@ -189,7 +191,10 @@ sub ImmichKiosk_Set {
   if ($cmd eq "album") {
     return "usage: set $name album <name>" if (!@args);
     return $noAlbums if (!%{$hash->{helper}{albums} // {}});
-    return ImmichKiosk_SelectAlbum($hash, $args[0], 0);
+    # labels contain spaces: use all arguments
+    my ($album, $err) = ImmichKiosk_ResolveAlbum($hash, join(" ", @args));
+    return $err if ($err);
+    return ImmichKiosk_SelectAlbum($hash, $album, 0);
   }
   if ($cmd eq "nextAlbum" || $cmd eq "prevAlbum") {
     my $dir = $cmd eq "nextAlbum" ? 1 : -1;
@@ -249,6 +254,11 @@ sub ImmichKiosk_Attr {
     elsif ($attr eq "fullyUrl") {
       return "$attr must start with http:// or https://" if ($val !~ m{^https?://});
     }
+    elsif ($attr eq "albumLabels") {
+      for my $def (split(/\s*[,\n]\s*/, $val)) {
+        return "invalid entry '$def', expected <album>=<label>,<album>=<label>,..." if ($def !~ /^[^=]+=.+$/);
+      }
+    }
     elsif ($attr eq "virtualAlbums") {
       for my $def (split(/\s+/, $val)) {
         return "invalid entry '$def', expected <name>=<album>,<album>,..." if ($def !~ /^[^=,:]+=[^=]+$/);
@@ -262,7 +272,12 @@ sub ImmichKiosk_Attr {
     CommandAttr(undef, "$name webCmd $IK_WEBCMD") if ($cmd eq "del" && $wc eq $IK_WEBCMD_FULL);
   }
   # list-relevant attributes: rebuild with the new value (it is applied after this function returns)
-  if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude)$/ && $IK_RAW{$name}) {
+  if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude|albumLabels)$/ && !$IK_RAW{$name} && $init_done) {
+    # no Immich data in memory (e.g. after reload 70_ImmichKiosk): reread, the attribute is applied by then
+    RemoveInternalTimer($hash, "ImmichKiosk_Reread");
+    InternalTimer(gettimeofday() + 1, "ImmichKiosk_Reread", $hash);
+  }
+  elsif ($attr =~ /^(virtualAlbums|albumOrder|albumExclude|albumLabels)$/ && $IK_RAW{$name}) {
     ImmichKiosk_BuildAlbums($hash, { $attr => $cmd eq "set" ? $val : "" });
     if ($attr eq "virtualAlbums" && $init_done) {
       # the current album may be a changed virtual album
@@ -403,6 +418,17 @@ sub ImmichKiosk_BuildAlbums {
   }
   Log3($name, 4, "$name: albums: " . scalar(@{$IK_RAW{$name} // []}) . " from Immich, " . scalar(keys %albums) . " selectable"
                . (@empty ? ", empty: " . join(",", @empty) : "") . (@excluded ? ", excluded/unnamed: " . join(",", @excluded) : ""));
+  # own labels, e.g. for virtual albums: Favoriten=🩵 Favoriten,Porsche-Museum=🏎️ Porsche Museum
+  for my $def (split(/\s*[,\n]\s*/, $av->("albumLabels", ""))) {
+    my ($an, $lbl) = split(/\s*=\s*/, $def, 2);
+    next if (!defined($lbl) || $lbl eq "");
+    if ($albums{$an}) {
+      $albums{$an}{label} = $lbl;
+    }
+    else {
+      Log3($name, 3, "$name: albumLabels: unknown album '$an'");
+    }
+  }
   # pinned albums first (attribute order), rest alphabetical
   my @pinned = grep { exists($albums{$_}) } split(/[\s,]+/, $av->("albumOrder", ""));
   my %pin    = map { $_ => 1 } @pinned;
@@ -411,6 +437,10 @@ sub ImmichKiosk_BuildAlbums {
   $hash->{helper}{order}  = \@order;
   readingsBeginUpdate($hash);
   readingsBulkUpdateIfChanged($hash, "albumList", join(",", @order));
+  readingsBulkUpdateIfChanged($hash, "albumLabelList", join(",", map { ImmichKiosk_Label($albums{$_}, $_) } @order));
+  # label of the current album may have changed in Immich
+  my $cur = ReadingsVal($name, "album", "");
+  readingsBulkUpdateIfChanged($hash, "albumLabel", ImmichKiosk_Label($albums{$cur}, $cur)) if ($albums{$cur});
   readingsBulkUpdateIfChanged($hash, "albumCount", scalar(@order));
   # persistent via statefile, so albums are selectable after restart before the first reread
   readingsBulkUpdateIfChanged($hash, ".albumData", JSON::PP->new->canonical->encode(\%albums));
@@ -445,6 +475,7 @@ sub ImmichKiosk_SelectAlbum {
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash, "album", $album);
   readingsBulkUpdate($hash, "albumId", join(",", @{$e->{ids}}));
+  readingsBulkUpdate($hash, "albumLabel", ImmichKiosk_Label($e, $album));
   readingsBulkUpdate($hash, "url", ImmichKiosk_BuildUrl($hash, $e->{ids}, 0));
   readingsBulkUpdate($hash, "state", $album);
   readingsEndUpdate($hash, 1);
@@ -816,6 +847,46 @@ sub ImmichKiosk_FullyCallback {
 ##############################################################################
 # Helpers
 ##############################################################################
+sub ImmichKiosk_Label {
+  my ($e, $album) = @_;
+  my $l = (ref($e) eq "HASH" && defined($e->{label}) && $e->{label} ne "") ? $e->{label} : $album;
+  # comma is the list separator of albumLabelList
+  $l =~ s/,//g;
+  $l =~ s/^\s+|\s+$//g;
+  return $l eq "" ? $album : $l;
+}
+sub ImmichKiosk_Normalize {
+  my ($s) = @_;
+  $s //= "";
+  # bytes -> characters, so that umlauts count as letters and lc works for them
+  $s = decode("UTF-8", $s) if (!utf8::is_utf8($s));
+  $s =~ s/[^\p{L}\p{N}]+//g;
+  return encode("UTF-8", lc($s));
+}
+sub ImmichKiosk_ResolveAlbum {
+  # album name, label or normalized form -> album name; returns (name) or (undef, error)
+  my ($hash, $arg) = @_;
+  my $name = $hash->{NAME};
+  my $a    = $hash->{helper}{albums} // {};
+  $arg =~ s/^\s+|\s+$//g;
+  return ($arg) if (exists($a->{$arg}));
+  my @order = @{$hash->{helper}{order} // []};
+  my @hit   = grep { ImmichKiosk_Label($a->{$_}, $_) eq $arg } @order;
+  if (@hit == 1) {
+    Log3($name, 4, "$name: album '$arg' resolved via label to $hit[0]");
+    return ($hit[0]);
+  }
+  my $n = ImmichKiosk_Normalize($arg);
+  return (undef, "unknown album '$arg'") if ($n eq "");
+  # several labels may be identical after removing commas: fall through to the normalized comparison
+  @hit = grep { ImmichKiosk_Normalize($_) eq $n || ImmichKiosk_Normalize(ImmichKiosk_Label($a->{$_}, $_)) eq $n } @order;
+  if (@hit == 1) {
+    Log3($name, 4, "$name: album '$arg' resolved via normalized name to $hit[0]");
+    return ($hit[0]);
+  }
+  return (undef, "album '$arg' is ambiguous: " . join(", ", @hit)) if (@hit > 1);
+  return (undef, "unknown album '$arg' - see reading albumList or albumLabelList");
+}
 sub ImmichKiosk_CleanName {
   my ($n) = @_;
   $n //= "";
@@ -947,7 +1018,11 @@ sub ImmichKiosk_GetSecret {
   <b>Set</b>
   <ul>
     <li><a id="ImmichKiosk-set-album"></a><code>album &lt;name&gt;</code><br>
-      Selects an album or virtual album. Stops a running rotation.</li>
+      Selects an album or virtual album. Stops a running rotation.<br>
+      Besides the album name, the label (original Immich name, see reading albumLabelList) is accepted,
+      e.g. <code>set kiosk album &#x1F3CE;&#xFE0F; Porsche Museum</code>. If neither matches exactly, the value is
+      compared with letters and digits only, case-insensitive, so <code>porsche museum</code> also selects
+      Porsche-Museum. Ambiguous or unknown values return an error.</li>
     <li><a id="ImmichKiosk-set-nextAlbum"></a><a id="ImmichKiosk-set-prevAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
       Without rotation: steps through the album list. With rotation: steps within the rotation.</li>
     <li><a id="ImmichKiosk-set-rotation"></a><code>rotation on|off</code><br>
@@ -1022,6 +1097,10 @@ sub ImmichKiosk_GetSecret {
       Combines albums into one entry. Members are album names (prefix match, e.g. Istanbul matches
       Istanbul-2026) or album IDs. A single kiosk keyword (all, owned, shared, favorites) is also possible.
       Example: <code>Favourites=favorites Holidays=Turkey-2026,Istanbul,Barcelona</code></li>
+    <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;album&gt;=&lt;label&gt;,&lt;album&gt;=&lt;label&gt; ...</code><br>
+      Own labels (readings albumLabel / albumLabelList), mainly for virtual albums, which otherwise use their name.
+      Also overrides the Immich name of real albums. Separated by comma or newline.
+      Example: <code>Favoriten=&#x1FA75; Favoriten,Porsche-Museum=&#x1F3CE;&#xFE0F; Porsche Museum</code></li>
     <li><a id="ImmichKiosk-attr-albumRefreshInterval"></a><code>albumRefreshInterval &lt;seconds&gt;</code><br>
       Periodic reread of the album list. Every rotation step rereads anyway.</li>
     <li><a id="ImmichKiosk-attr-urlParams"></a><code>urlParams &lt;params&gt;</code><br>
@@ -1030,6 +1109,12 @@ sub ImmichKiosk_GetSecret {
       Fully Kiosk Browser REST endpoint, e.g. <code>http://10.3.3.50:2323</code>.
       If set, the kiosk URL is stored as Fully start URL and loaded, and the commands nextImage, prevImage,
       addToFavorites and removeFromFavorites become available.</li>
+  </ul><br>
+  <b>FHEMApp</b>
+  <ul>
+    Album menu with labels, the active album highlighted (panel element of the device):<br>
+    <code>"menu": ["dev-albumLabelList::%s:set dev album %v"]</code><br>
+    <code>"current": ["dev-albumLabel::%s:success"]</code>
   </ul><br>
   <b>Logging</b>
   <ul>
@@ -1053,6 +1138,9 @@ sub ImmichKiosk_GetSecret {
     <li><code>albumDuration</code> - time (HH:MM) to show all slides of the selected album once:
       albumSlides &times; (imageDuration + imageBuffer); independent of rotation</li>
     <li><code>albumList</code> - all selectable albums in list order</li>
+    <li><code>albumLabelList</code> - labels of all albums (original Immich names incl. emojis, commas removed),
+      same order as albumList; virtual albums use their name unless set via albumLabels</li>
+    <li><code>albumLabel</code> - label of the selected album</li>
     <li><code>albumCount</code> - number of selectable albums</li>
     <li><code>url</code> - kiosk URL of the selected album, without password</li>
     <li><code>lastReread</code> - time of the last successful album reread</li>
@@ -1096,7 +1184,11 @@ sub ImmichKiosk_GetSecret {
   <b>Set</b>
   <ul>
     <li><a id="ImmichKiosk-set-album"></a><code>album &lt;name&gt;</code><br>
-      W&auml;hlt ein Album oder virtuelles Album. Stoppt eine laufende Rotation.</li>
+      W&auml;hlt ein Album oder virtuelles Album. Stoppt eine laufende Rotation.<br>
+      Neben dem Albumnamen wird auch das Label (Original-Name aus Immich, siehe Reading albumLabelList) akzeptiert,
+      z.B. <code>set kiosk album &#x1F3CE;&#xFE0F; Porsche Museum</code>. Passt keins von beiden exakt, wird nur anhand
+      von Buchstaben und Ziffern ohne Gro&szlig;-/Kleinschreibung verglichen, <code>porsche museum</code> w&auml;hlt also
+      ebenfalls Porsche-Museum. Mehrdeutige oder unbekannte Werte liefern eine Fehlermeldung.</li>
     <li><a id="ImmichKiosk-set-nextAlbum"></a><a id="ImmichKiosk-set-prevAlbum"></a><code>nextAlbum</code>, <code>prevAlbum</code><br>
       Ohne Rotation: bl&auml;ttert durch die Albumliste. Mit Rotation: bl&auml;ttert innerhalb der Rotation.</li>
     <li><a id="ImmichKiosk-set-rotation"></a><code>rotation on|off</code><br>
@@ -1172,6 +1264,10 @@ sub ImmichKiosk_GetSecret {
       Istanbul-2026) oder Album-IDs. Ein einzelnes Kiosk-Schl&uuml;sselwort (all, owned, shared, favorites) ist
       ebenfalls m&ouml;glich.
       Beispiel: <code>Favoriten=favorites Urlaub=T&uuml;rkei-2026,Istanbul,Barcelona</code></li>
+    <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;Album&gt;=&lt;Label&gt;,&lt;Album&gt;=&lt;Label&gt; ...</code><br>
+      Eigene Labels (Readings albumLabel / albumLabelList), vor allem f&uuml;r virtuelle Alben, die sonst ihren Namen nutzen.
+      &Uuml;bersteuert auch den Immich-Namen echter Alben. Getrennt durch Komma oder Zeilenumbruch.
+      Beispiel: <code>Favoriten=&#x1FA75; Favoriten,Porsche-Museum=&#x1F3CE;&#xFE0F; Porsche Museum</code></li>
     <li><a id="ImmichKiosk-attr-albumRefreshInterval"></a><code>albumRefreshInterval &lt;Sekunden&gt;</code><br>
       Periodisches Neueinlesen der Albumliste. Jeder Rotationsschritt liest ohnehin neu ein.</li>
     <li><a id="ImmichKiosk-attr-urlParams"></a><code>urlParams &lt;Parameter&gt;</code><br>
@@ -1180,6 +1276,12 @@ sub ImmichKiosk_GetSecret {
       REST-Endpunkt des Fully Kiosk Browser, z.B. <code>http://10.3.3.50:2323</code>.
       Wenn gesetzt, wird die Kiosk-URL als Fully-Start-URL gespeichert und geladen, und die Befehle nextImage, prevImage,
       addToFavorites und removeFromFavorites stehen zur Verf&uuml;gung.</li>
+  </ul><br>
+  <b>FHEMApp</b>
+  <ul>
+    Albummen&uuml; mit Labels, das aktive Album hervorgehoben (Panel-Element des Ger&auml;ts):<br>
+    <code>"menu": ["dev-albumLabelList::%s:set dev album %v"]</code><br>
+    <code>"current": ["dev-albumLabel::%s:success"]</code>
   </ul><br>
   <b>Logging</b>
   <ul>
@@ -1203,6 +1305,9 @@ sub ImmichKiosk_GetSecret {
     <li><code>albumDuration</code> - Dauer (HH:MM), bis alle Slides des gew&auml;hlten Albums einmal gezeigt wurden:
       albumSlides &times; (imageDuration + imageBuffer); unabh&auml;ngig von der Rotation</li>
     <li><code>albumList</code> - alle w&auml;hlbaren Alben in Listenreihenfolge</li>
+    <li><code>albumLabelList</code> - Labels aller Alben (Original-Namen aus Immich inkl. Emojis, ohne Kommas),
+      gleiche Reihenfolge wie albumList; virtuelle Alben nutzen ihren Namen, sofern nicht per albumLabels gesetzt</li>
+    <li><code>albumLabel</code> - Label des gew&auml;hlten Albums</li>
     <li><code>albumCount</code> - Anzahl der w&auml;hlbaren Alben</li>
     <li><code>url</code> - Kiosk-URL des gew&auml;hlten Albums, ohne Passwort</li>
     <li><code>lastReread</code> - Zeitpunkt des letzten erfolgreichen Einlesens</li>

@@ -1,3 +1,11 @@
+2026-11-13 0.5.9 new attribute albumLabels: own labels (e.g. for virtual albums), also
+                 overrides the Immich name of real albums
+                 reload updates VERSION of existing devices; changing albumOrder, albumExclude,
+                 virtualAlbums or albumLabels after a reload triggers a reread
+2026-11-13 0.5.8 new readings albumLabelList and albumLabel (Immich names incl. emojis)
+                 set album also accepts the label and a normalized form (letters and digits,
+                 case-insensitive), e.g. set kiosk album porsche museum
+                 commandref: FHEMApp example (dynamic album menu, active album highlighted)
 2026-11-12 0.5.7 GPL v3 license header, $Id line maintained automatically (FVERSION)
 2026-11-12 0.5.6 changing virtualAlbums updates the current album (albumId, url, display,
                  albumImages, albumSlides, albumDuration)
