@@ -25,7 +25,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.9";
+my $IK_VERSION = "0.5.10";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
@@ -149,7 +149,7 @@ sub ImmichKiosk_StartTimers {
   RemoveInternalTimer($hash, "ImmichKiosk_RefreshTimer");
   RemoveInternalTimer($hash, "ImmichKiosk_ProgressTimer");
   return if (IsDisabled($name));
-  my $ri = AttrVal($name, "albumRefreshInterval", 0);
+  my $ri = AttrVal($name, "albumRefreshInterval", 86400);
   InternalTimer(gettimeofday() + $ri, "ImmichKiosk_RefreshTimer", $hash) if ($ri > 0);
   my $pi = AttrVal($name, "progressInterval", 300);
   InternalTimer(gettimeofday() + $pi, "ImmichKiosk_ProgressTimer", $hash) if ($pi > 0);
@@ -158,7 +158,7 @@ sub ImmichKiosk_StartTimers {
 }
 sub ImmichKiosk_RefreshTimer {
   my ($hash) = @_;
-  my $ri = AttrVal($hash->{NAME}, "albumRefreshInterval", 0);
+  my $ri = AttrVal($hash->{NAME}, "albumRefreshInterval", 86400);
   InternalTimer(gettimeofday() + $ri, "ImmichKiosk_RefreshTimer", $hash) if ($ri > 0);
   ImmichKiosk_Reread($hash);
   return;
@@ -1102,7 +1102,8 @@ sub ImmichKiosk_GetSecret {
       Also overrides the Immich name of real albums. Separated by comma or newline.
       Example: <code>Favoriten=&#x1FA75; Favoriten,Porsche-Museum=&#x1F3CE;&#xFE0F; Porsche Museum</code></li>
     <li><a id="ImmichKiosk-attr-albumRefreshInterval"></a><code>albumRefreshInterval &lt;seconds&gt;</code><br>
-      Periodic reread of the album list. Every rotation step rereads anyway.</li>
+      Periodic reread of the album list. 0 = off. Default: 86400 (once a day).
+      Every rotation step rereads anyway.</li>
     <li><a id="ImmichKiosk-attr-urlParams"></a><code>urlParams &lt;params&gt;</code><br>
       Additional static URL parameters, e.g. <code>image_fit=cover&amp;transition=fade</code></li>
     <li><a id="ImmichKiosk-attr-fullyUrl"></a><code>fullyUrl &lt;url&gt;</code><br>
@@ -1269,7 +1270,8 @@ sub ImmichKiosk_GetSecret {
       &Uuml;bersteuert auch den Immich-Namen echter Alben. Getrennt durch Komma oder Zeilenumbruch.
       Beispiel: <code>Favoriten=&#x1FA75; Favoriten,Porsche-Museum=&#x1F3CE;&#xFE0F; Porsche Museum</code></li>
     <li><a id="ImmichKiosk-attr-albumRefreshInterval"></a><code>albumRefreshInterval &lt;Sekunden&gt;</code><br>
-      Periodisches Neueinlesen der Albumliste. Jeder Rotationsschritt liest ohnehin neu ein.</li>
+      Periodisches Neueinlesen der Albumliste. 0 = aus. Standard: 86400 (einmal t&auml;glich).
+      Jeder Rotationsschritt liest ohnehin neu ein.</li>
     <li><a id="ImmichKiosk-attr-urlParams"></a><code>urlParams &lt;Parameter&gt;</code><br>
       Zus&auml;tzliche feste URL-Parameter, z.B. <code>image_fit=cover&amp;transition=fade</code></li>
     <li><a id="ImmichKiosk-attr-fullyUrl"></a><code>fullyUrl &lt;url&gt;</code><br>
