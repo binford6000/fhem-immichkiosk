@@ -25,9 +25,11 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.5.10";
+my $IK_VERSION = "0.6.0";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
+# raw Immich people lists per device (named, not hidden)
+my %IK_PEOPLE;
 my %IK_SPECIAL = map { $_ => 1 } qw(all owned shared favorites);
 my %IK_JS = (
   nextImage      => "document.querySelector('.navigation--next-asset')?.click();",
@@ -51,7 +53,7 @@ sub ImmichKiosk_Initialize {
   $hash->{NotifyFn} = "ImmichKiosk_Notify";
   $hash->{AttrList} = "disable:0,1 imageDuration imageBuffer layout:single,portrait,landscape,splitview,splitview-landscape "
                     . "rotationExclude:textField-long rotationMax rotationRetry progressInterval "
-                    . "albumOrder:textField-long albumExclude:textField-long virtualAlbums:textField-long albumLabels:textField-long "
+                    . "albumOrder:textField-long albumExclude:textField-long virtualAlbums:textField-long albumLabels:textField-long excludePeople:textField-long "
                     . "albumRefreshInterval urlParams fullyUrl " . $readingFnAttributes;
   # reload: VERSION of existing devices is otherwise only set in define
   $_->{VERSION} = $IK_VERSION for (grep { ($_->{TYPE} // "") eq "ImmichKiosk" } values %defs);
@@ -85,6 +87,7 @@ sub ImmichKiosk_Undef {
   my ($hash, $name) = @_;
   RemoveInternalTimer($hash);
   delete($IK_RAW{$name});
+  delete($IK_PEOPLE{$name});
   return;
 }
 sub ImmichKiosk_Delete {
@@ -95,7 +98,8 @@ sub ImmichKiosk_Delete {
 }
 sub ImmichKiosk_Rename {
   my ($new, $old) = @_;
-  $IK_RAW{$new} = delete($IK_RAW{$old});
+  $IK_RAW{$new}    = delete($IK_RAW{$old});
+  $IK_PEOPLE{$new} = delete($IK_PEOPLE{$old});
   # move secrets to the new device name
   for my $k (qw(apiKey kioskPassword fullyPassword)) {
     my ($err, $val) = getKeyValue("ImmichKiosk_${old}_$k");
@@ -239,7 +243,14 @@ sub ImmichKiosk_Get {
     }
     return $ret;
   }
-  return "Unknown argument $cmd, choose one of albums:noArg";
+  if ($cmd eq "people") {
+    my $pp = $hash->{helper}{people} // {};
+    return "no people loaded - the apiKey needs permission person.read, then: set $name reread" if (!%{$pp});
+    my $ret = sprintf("%-25s %s\n", "Person", "ID");
+    $ret .= sprintf("%-25s %s\n", $_, $pp->{$_}{id}) for (sort { lc($a) cmp lc($b) } keys %{$pp});
+    return $ret;
+  }
+  return "Unknown argument $cmd, choose one of albums:noArg people:noArg";
 }
 sub ImmichKiosk_Attr {
   my ($cmd, $name, $attr, $val) = @_;
@@ -261,6 +272,11 @@ sub ImmichKiosk_Attr {
     }
     elsif ($attr eq "virtualAlbums") {
       for my $def (split(/\s+/, $val)) {
+        my $m = (split(/=/, $def, 2))[1] // "";
+        # people: @a,@b (any of them) or @a+@b (all together), not mixed with albums
+        if ($m =~ /[@+]/ && $m !~ /^@[^,+@=]+(?:,@[^,+@=]+)*$/ && $m !~ /^@[^,+@=]+(?:\+@[^,+@=]+)+$/) {
+          return "invalid entry '$def': people are written as \@a,\@b (any of them) or \@a+\@b (all together) and cannot be mixed with albums";
+        }
         return "invalid entry '$def', expected <name>=<album>,<album>,..." if ($def !~ /^[^=,:]+=[^=]+$/);
       }
     }
@@ -272,6 +288,11 @@ sub ImmichKiosk_Attr {
     CommandAttr(undef, "$name webCmd $IK_WEBCMD") if ($cmd eq "del" && $wc eq $IK_WEBCMD_FULL);
   }
   # list-relevant attributes: rebuild with the new value (it is applied after this function returns)
+  if ($attr eq "excludePeople" && $init_done) {
+    # new URL for the current album
+    RemoveInternalTimer($hash, "ImmichKiosk_ReloadCurrent");
+    InternalTimer(gettimeofday() + 1, "ImmichKiosk_ReloadCurrent", $hash);
+  }
   if ($attr =~ /^(virtualAlbums|albumOrder|albumExclude|albumLabels)$/ && !$IK_RAW{$name} && $init_done) {
     # no Immich data in memory (e.g. after reload 70_ImmichKiosk): reread, the attribute is applied by then
     RemoveInternalTimer($hash, "ImmichKiosk_Reread");
@@ -344,13 +365,56 @@ sub ImmichKiosk_RereadCallback {
   }
   ImmichKiosk_ClearError($hash, "Immich");
   $IK_RAW{$name} = $list;
+  ImmichKiosk_PeopleFetch($hash, $param->{next}, 1, []);
+  return;
+}
+sub ImmichKiosk_PeopleFetch {
+  my ($hash, $next, $page, $acc) = @_;
+  my $key = ImmichKiosk_GetSecret($hash, "apiKey") // "";
+  ImmichKiosk_Http($hash, {
+    url      => "$hash->{IMMICH_URL}/api/people?withHidden=false&size=1000&page=$page",
+    timeout  => 10,
+    method   => "GET",
+    header   => "Accept: application/json\r\nx-api-key: $key",
+    hash     => $hash,
+    next     => $next,
+    ikPage   => $page,
+    ikAcc    => $acc,
+    callback => \&ImmichKiosk_PeopleCallback,
+  });
+  return;
+}
+sub ImmichKiosk_PeopleCallback {
+  my ($param, $err, $data) = @_;
+  my $hash = $param->{hash};
+  my $name = $hash->{NAME};
+  my $res  = (!$err && ($param->{code} // 0) == 200) ? eval { JSON::PP::decode_json($data) } : undef;
+  if (ref($res) ne "HASH" || ref($res->{people}) ne "ARRAY") {
+    my $msg = "people not available: " . ($res ? "invalid response" : ImmichKiosk_HttpMsg($param, $err, $data, "person.read"));
+    # only an error if people are used; otherwise a hint (permission person.read is optional)
+    if (AttrVal($name, "virtualAlbums", "") =~ /@/ || AttrVal($name, "excludePeople", "") ne "") {
+      ImmichKiosk_Error($hash, "Immich", $msg);
+    }
+    else {
+      Log3($name, 4, "$name: $msg");
+    }
+    return ImmichKiosk_RereadDone($hash, $param->{next});
+  }
+  push(@{$param->{ikAcc}}, grep { ($_->{name} // "") ne "" && !$_->{isHidden} } @{$res->{people}});
+  return ImmichKiosk_PeopleFetch($hash, $param->{next}, $param->{ikPage} + 1, $param->{ikAcc}) if ($res->{hasNextPage});
+  $IK_PEOPLE{$name} = $param->{ikAcc};
+  return ImmichKiosk_RereadDone($hash, $param->{next});
+}
+sub ImmichKiosk_RereadDone {
+  my ($hash, $next) = @_;
+  my $name = $hash->{NAME};
   ImmichKiosk_BuildAlbums($hash, {});
   readingsBeginUpdate($hash);
   readingsBulkUpdate($hash, "lastReread", TimeNow());
   readingsBulkUpdate($hash, "state", ReadingsVal($name, "album", "ready"));
   readingsEndUpdate($hash, 1);
-  if (ref($param->{next}) eq "CODE") {
-    $param->{next}->();
+  if (ref($next) eq "CODE") {
+    $next->();
   }
   else {
     # image count of the current album may have changed
@@ -383,9 +447,43 @@ sub ImmichKiosk_BuildAlbums {
     $albums{$n} = { ids => [ $al->{id} ], count => $al->{assetCount}, label => encode("UTF-8", $al->{albumName} // "") };
   }
   my @real = sort keys %albums;
+  # people: cleaned name (like album names) -> id, label
+  my %people;
+  for my $pe (@{$IK_PEOPLE{$name} // []}) {
+    my $n = ImmichKiosk_CleanName($pe->{name});
+    next if ($n eq "");
+    my ($base, $i) = ($n, 2);
+    while (exists($people{$n})) {
+      $n = "$base-$i";
+      $i++;
+    }
+    $people{$n} = { id => $pe->{id}, label => encode("UTF-8", $pe->{name}) };
+  }
+  $hash->{helper}{people} = \%people if ($IK_PEOPLE{$name});
+  my %pid = map { lc($_) => $people{$_}{id} } keys %people;
   for my $def (split(/\s+/, $av->("virtualAlbums", ""))) {
     my ($vname, $members) = split(/=/, $def, 2);
     next if (!defined($members) || $vname eq "");
+    # people: @a,@b = any of them, @a+@b = all together
+    if ($members =~ /^@/) {
+      my $all = $members =~ /\+/ ? 1 : 0;
+      my (@pids, @pmiss);
+      for my $pn (map { s/^@//r } split(/[,+]/, $members)) {
+        my $id = $pid{lc($pn)} // ($pn =~ /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i ? $pn : undef);
+        if (defined($id)) {
+          push(@pids, $id);
+        }
+        else {
+          push(@pmiss, $pn);
+        }
+      }
+      Log3($name, 3, "$name: virtual album $vname - people not found: @pmiss") if (@pmiss && $IK_PEOPLE{$name});
+      Log3($name, 4, "$name: virtual album $vname: " . scalar(@pids) . " person(s), " . ($all ? "all together" : "any of them"));
+      # people missing: incomplete selection would show the wrong images
+      $albums{$vname} = { ids => [ map { "person:$_" } @pids ], peopleAll => $all, count => undef, label => $vname, virtual => 1 }
+        if (@pids && !@pmiss);
+      next;
+    }
     my (@ids, @miss, %seen);
     my $count = 0;
     my @m = split(/,/, $members);
@@ -442,6 +540,7 @@ sub ImmichKiosk_BuildAlbums {
   my $cur = ReadingsVal($name, "album", "");
   readingsBulkUpdateIfChanged($hash, "albumLabel", ImmichKiosk_Label($albums{$cur}, $cur)) if ($albums{$cur});
   readingsBulkUpdateIfChanged($hash, "albumCount", scalar(@order));
+  readingsBulkUpdateIfChanged($hash, "peopleList", join(",", sort { lc($a) cmp lc($b) } keys %people)) if ($IK_PEOPLE{$name});
   # persistent via statefile, so albums are selectable after restart before the first reread
   readingsBulkUpdateIfChanged($hash, ".albumData", JSON::PP->new->canonical->encode(\%albums));
   readingsEndUpdate($hash, 1);
@@ -476,7 +575,7 @@ sub ImmichKiosk_SelectAlbum {
   readingsBulkUpdate($hash, "album", $album);
   readingsBulkUpdate($hash, "albumId", join(",", @{$e->{ids}}));
   readingsBulkUpdate($hash, "albumLabel", ImmichKiosk_Label($e, $album));
-  readingsBulkUpdate($hash, "url", ImmichKiosk_BuildUrl($hash, $e->{ids}, 0));
+  readingsBulkUpdate($hash, "url", ImmichKiosk_BuildUrl($hash, $e, 0));
   readingsBulkUpdate($hash, "state", $album);
   readingsEndUpdate($hash, 1);
   Log3($name, 3, "$name: loading album $album");
@@ -486,12 +585,15 @@ sub ImmichKiosk_SelectAlbum {
   else {
     ImmichKiosk_Stats($hash, $album, sub { ImmichKiosk_StatsUpdate($hash, $album, @_) });
   }
-  return ImmichKiosk_SendUrl($hash, $e->{ids});
+  return ImmichKiosk_SendUrl($hash, $e);
 }
 sub ImmichKiosk_BuildUrl {
-  my ($hash, $ids, $withSecret) = @_;
+  my ($hash, $e, $withSecret) = @_;
   my $name = $hash->{NAME};
-  my @p = map { "album=" . ImmichKiosk_UrlEnc($_) } @{$ids};
+  # person:<id> -> person=<id>, otherwise album=<id or keyword>
+  my @p = map { /^person:(.+)$/ ? "person=" . ImmichKiosk_UrlEnc($1) : "album=" . ImmichKiosk_UrlEnc($_) } @{$e->{ids}};
+  push(@p, "require_all_people=true") if ($e->{peopleAll});
+  push(@p, map { "exclude_person=" . ImmichKiosk_UrlEnc($_) } ImmichKiosk_ExcludeIds($hash));
   my $dur = AttrVal($name, "imageDuration", "");
   push(@p, "duration=$dur") if ($dur ne "");
   my $layout = AttrVal($name, "layout", "");
@@ -506,10 +608,32 @@ sub ImmichKiosk_BuildUrl {
   my $base = $hash->{KIOSK_URL};
   return $base . ($base =~ /\?/ ? "&" : "?") . join("&", @p);
 }
+sub ImmichKiosk_ExcludeIds {
+  my ($hash) = @_;
+  my $name = $hash->{NAME};
+  my %pid  = map { lc($_) => $hash->{helper}{people}{$_}{id} } keys %{$hash->{helper}{people} // {}};
+  my @ids;
+  for my $x (split(/[\s,]+/, AttrVal($name, "excludePeople", ""))) {
+    my $id = $pid{lc($x)} // ($x =~ /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i ? $x : undef);
+    if (defined($id)) {
+      push(@ids, $id);
+    }
+    else {
+      Log3($name, 3, "$name: excludePeople: unknown person '$x'");
+    }
+  }
+  return @ids;
+}
+sub ImmichKiosk_ReloadCurrent {
+  my ($hash) = @_;
+  my $album = ReadingsVal($hash->{NAME}, "album", "");
+  ImmichKiosk_SelectAlbum($hash, $album, 1) if ($album ne "" && $hash->{helper}{albums}{$album});
+  return;
+}
 sub ImmichKiosk_SendUrl {
-  my ($hash, $ids) = @_;
+  my ($hash, $e) = @_;
   return if (AttrVal($hash->{NAME}, "fullyUrl", "") eq "");
-  my $url = ImmichKiosk_BuildUrl($hash, $ids, 1);
+  my $url = ImmichKiosk_BuildUrl($hash, $e, 1);
   # store as start URL (survives tablet restarts), then load it
   return ImmichKiosk_Fully($hash, "setStringSetting", { key => "startURL", value => $url },
     sub { ImmichKiosk_Fully($hash, "loadStartURL", {}) });
@@ -615,11 +739,14 @@ sub ImmichKiosk_Stats {
   my $layout = AttrVal($name, "layout", "single");
   my @ids    = @{$e->{ids}};
   my $fav    = (@ids == 1 && $ids[0] eq "favorites") ? 1 : 0;
+  my $person = (@ids && $ids[0] =~ /^person:/) ? 1 : 0;
+  return $cb->(undef, undef) if (!@ids);
   # other kiosk keywords (all, owned, shared): would require counting the whole library
   return $cb->(undef, undef) if (!$fav && $IK_SPECIAL{$ids[0]});
   # single: every asset is one slide, no EXIF query needed
-  return $cb->($e->{count}, $e->{count}) if (!$fav && $layout eq "single");
+  return $cb->($e->{count}, $e->{count}) if (!$fav && !$person && $layout eq "single");
   my $ctx = { album => $album, layout => $layout, cb => $cb, count => $e->{count}, fav => $fav,
+              person => $person, all => $e->{peopleAll}, npeople => scalar(@ids),
               ids => $fav ? [undef] : [@ids], land => 0, port => 0, square => 0, page => 1 };
   ImmichKiosk_StatsFetch($hash, $ctx);
   return;
@@ -630,6 +757,10 @@ sub ImmichKiosk_StatsFetch {
   my %q   = (type => "IMAGE", withExif => JSON::PP::true(), size => 1000, page => 0 + $ctx->{page});
   if ($ctx->{fav}) {
     $q{isFavorite} = JSON::PP::true();
+  }
+  elsif ($ctx->{person}) {
+    # one person per query, any/all is resolved by asset id in ImmichKiosk_StatsParse
+    $q{personIds} = [ $ctx->{ids}[0] =~ s/^person://r ];
   }
   else {
     # one album per query: several albumIds would only match assets contained in all of them
@@ -664,14 +795,14 @@ sub ImmichKiosk_StatsParse {
     # EXIF orientation 5-8 = rotated by 90 degrees -> swap width/height
     ($w, $h) = ($h, $w) if (($e->{orientation} // "") =~ /^[5-8]$/);
     # square or without EXIF dimensions: always shown as single slide
-    if ($h > $w) {
-      $ctx->{port}++;
-    }
-    elsif ($w > $h) {
-      $ctx->{land}++;
+    my $cls = $h > $w ? "port" : $w > $h ? "land" : "square";
+    if ($ctx->{person}) {
+      # people: collect per asset, an image may show several of the persons
+      $ctx->{cls}{$as->{id} // ""} = $cls;
+      $ctx->{hit}{$as->{id} // ""}++;
     }
     else {
-      $ctx->{square}++;
+      $ctx->{$cls}++;
     }
   }
   my $next = $res->{assets}{nextPage};
@@ -685,6 +816,13 @@ sub ImmichKiosk_StatsParse {
     $ctx->{page} = 1;
     return ImmichKiosk_StatsFetch($hash, $ctx);
   }
+  if ($ctx->{person}) {
+    # any of them: union; all together: images that contain every person
+    for my $id (keys %{$ctx->{cls} // {}}) {
+      next if ($ctx->{all} && $ctx->{hit}{$id} < $ctx->{npeople});
+      $ctx->{$ctx->{cls}{$id}}++;
+    }
+  }
   my ($l, $p, $q) = @{$ctx}{qw(land port square)};
   my %slides = (
     portrait              => $p,
@@ -696,8 +834,8 @@ sub ImmichKiosk_StatsParse {
   );
   my $slides = $slides{$ctx->{layout}} // ($l + $p + $q);
   Log3($hash->{NAME}, 4, "$hash->{NAME}: $ctx->{album}: landscape $l, portrait $p, square/unknown $q, layout $ctx->{layout} -> $slides slides");
-  # favorites: number of favorite images; albums: asset count from Immich
-  return $ctx->{cb}->($ctx->{fav} ? $l + $p + $q : $ctx->{count}, $slides);
+  # favorites / people: counted images; albums: asset count from Immich
+  return $ctx->{cb}->(($ctx->{fav} || $ctx->{person}) ? $l + $p + $q : $ctx->{count}, $slides);
 }
 sub ImmichKiosk_Secs {
   my ($hash, $slides) = @_;
@@ -1034,7 +1172,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich API key (Immich: Account Settings &rarr; API Keys). Required to read albums.
       Minimum permissions: <code>album.read</code> (album list) and <code>asset.read</code>
-      (image orientation for the layout calculation and image count of favorites).
+      (image orientation for the layout calculation and image count of favorites and people).
+      Optional: <code>person.read</code>, only needed for people (virtualAlbums with @, excludePeople, get people).
       A separate key for this module is recommended, independent of the key used by immich-kiosk.
       No write permissions are needed: addToFavorites / removeFromFavorites are executed by immich-kiosk
       with its own API key (kiosk config), not by this module.
@@ -1058,6 +1197,8 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <li><a id="ImmichKiosk-get-albums"></a><code>albums</code><br>
       Lists all albums with asset count and ID(s).</li>
+    <li><a id="ImmichKiosk-get-people"></a><code>people</code><br>
+      Lists all named, not hidden persons from Immich with their ID (requires permission person.read).</li>
   </ul><br>
   <a id="ImmichKiosk-attr"></a>
   <b>Attributes</b>
@@ -1096,7 +1237,16 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-attr-virtualAlbums"></a><code>virtualAlbums &lt;name&gt;=&lt;album&gt;,&lt;album&gt; ...</code><br>
       Combines albums into one entry. Members are album names (prefix match, e.g. Istanbul matches
       Istanbul-2026) or album IDs. A single kiosk keyword (all, owned, shared, favorites) is also possible.
-      Example: <code>Favourites=favorites Holidays=Turkey-2026,Istanbul,Barcelona</code></li>
+      Example: <code>Favourites=favorites Holidays=Turkey-2026,Istanbul,Barcelona</code><br>
+      People (names from <code>get people</code>, prefixed with @): <code>@a,@b</code> shows images with any of the
+      persons, <code>@a+@b</code> only images showing all of them together (kiosk require_all_people).
+      People cannot be mixed with albums in one entry. Requires permission person.read for the module's key;
+      immich-kiosk itself needs person.statistics for its own key.
+      Example: <code>Kids=@Hannah,@Toni KidsTogether=@Hannah+@Toni</code></li>
+    <li><a id="ImmichKiosk-attr-excludePeople"></a><code>excludePeople &lt;person&gt;,&lt;person&gt; ...</code><br>
+      Images showing one of these persons are never shown (kiosk exclude_person), for albums and people alike.
+      Names from <code>get people</code> or person IDs, separated by comma or whitespace.
+      albumImages / albumSlides do not take this into account.</li>
     <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;album&gt;=&lt;label&gt;,&lt;album&gt;=&lt;label&gt; ...</code><br>
       Own labels (readings albumLabel / albumLabelList), mainly for virtual albums, which otherwise use their name.
       Also overrides the Immich name of real albums. Separated by comma or newline.
@@ -1133,7 +1283,7 @@ sub ImmichKiosk_GetSecret {
       Deleted again after the next successful request to the same source.</li>
     <li><code>album</code> - selected album</li>
     <li><code>albumId</code> - Immich album ID(s) or kiosk keyword of the selected album</li>
-    <li><code>albumImages</code> - number of assets of the selected album; favorites: number of favorite images;
+    <li><code>albumImages</code> - number of assets of the selected album; favorites / people: number of matching images;
       - for the kiosk keywords all, owned, shared</li>
     <li><code>albumSlides</code> - number of slides of the selected album according to attribute layout</li>
     <li><code>albumDuration</code> - time (HH:MM) to show all slides of the selected album once:
@@ -1143,6 +1293,7 @@ sub ImmichKiosk_GetSecret {
       same order as albumList; virtual albums use their name unless set via albumLabels</li>
     <li><code>albumLabel</code> - label of the selected album</li>
     <li><code>albumCount</code> - number of selectable albums</li>
+    <li><code>peopleList</code> - names of all named persons from Immich (for virtualAlbums / excludePeople)</li>
     <li><code>url</code> - kiosk URL of the selected album, without password</li>
     <li><code>lastReread</code> - time of the last successful album reread</li>
     <li><code>lastCommand</code> - last command sent to Fully (nextImage, prevImage, addToFavorites, removeFromFavorites)</li>
@@ -1201,7 +1352,8 @@ sub ImmichKiosk_GetSecret {
     <li><a id="ImmichKiosk-set-apiKey"></a><code>apiKey &lt;key&gt;</code><br>
       Immich-API-Key (Immich: Kontoeinstellungen &rarr; API-Schl&uuml;ssel). Wird zum Einlesen der Alben ben&ouml;tigt.
       Mindestberechtigungen: <code>album.read</code> (Albumliste) und <code>asset.read</code>
-      (Bildausrichtung f&uuml;r die Layout-Berechnung und Bildanzahl der Favoriten).
+      (Bildausrichtung f&uuml;r die Layout-Berechnung und Bildanzahl der Favoriten und Personen).
+      Optional: <code>person.read</code>, nur f&uuml;r Personen n&ouml;tig (virtualAlbums mit @, excludePeople, get people).
       Empfohlen ist ein eigener Key f&uuml;r das Modul, unabh&auml;ngig vom Key von immich-kiosk.
       Schreibrechte sind nicht n&ouml;tig: addToFavorites / removeFromFavorites f&uuml;hrt immich-kiosk mit seinem
       eigenen API-Key (Kiosk-Konfiguration) aus, nicht dieses Modul.
@@ -1225,6 +1377,8 @@ sub ImmichKiosk_GetSecret {
   <ul>
     <li><a id="ImmichKiosk-get-albums"></a><code>albums</code><br>
       Listet alle Alben mit Bildanzahl und ID(s).</li>
+    <li><a id="ImmichKiosk-get-people"></a><code>people</code><br>
+      Listet alle benannten, nicht versteckten Personen aus Immich mit ihrer ID (ben&ouml;tigt die Berechtigung person.read).</li>
   </ul><br>
   <a id="ImmichKiosk-attr"></a>
   <b>Attribute</b>
@@ -1264,7 +1418,16 @@ sub ImmichKiosk_GetSecret {
       Fasst Alben zu einem Eintrag zusammen. Mitglieder sind Albumnamen (Pr&auml;fix-Match, z.B. Istanbul trifft
       Istanbul-2026) oder Album-IDs. Ein einzelnes Kiosk-Schl&uuml;sselwort (all, owned, shared, favorites) ist
       ebenfalls m&ouml;glich.
-      Beispiel: <code>Favoriten=favorites Urlaub=T&uuml;rkei-2026,Istanbul,Barcelona</code></li>
+      Beispiel: <code>Favoriten=favorites Urlaub=T&uuml;rkei-2026,Istanbul,Barcelona</code><br>
+      Personen (Namen aus <code>get people</code>, mit @ davor): <code>@a,@b</code> zeigt Bilder mit mindestens einer
+      der Personen, <code>@a+@b</code> nur Bilder, auf denen alle zusammen zu sehen sind (Kiosk require_all_people).
+      Personen und Alben lassen sich in einem Eintrag nicht mischen. Der Key des Moduls ben&ouml;tigt person.read,
+      immich-kiosk braucht f&uuml;r seinen eigenen Key person.statistics.
+      Beispiel: <code>Kinder=@Hannah,@Toni KinderZusammen=@Hannah+@Toni</code></li>
+    <li><a id="ImmichKiosk-attr-excludePeople"></a><code>excludePeople &lt;Person&gt;,&lt;Person&gt; ...</code><br>
+      Bilder mit einer dieser Personen werden nie angezeigt (Kiosk exclude_person), bei Alben wie bei Personen.
+      Namen aus <code>get people</code> oder Personen-IDs, getrennt durch Komma oder Leerzeichen.
+      albumImages / albumSlides ber&uuml;cksichtigen das nicht.</li>
     <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;Album&gt;=&lt;Label&gt;,&lt;Album&gt;=&lt;Label&gt; ...</code><br>
       Eigene Labels (Readings albumLabel / albumLabelList), vor allem f&uuml;r virtuelle Alben, die sonst ihren Namen nutzen.
       &Uuml;bersteuert auch den Immich-Namen echter Alben. Getrennt durch Komma oder Zeilenumbruch.
@@ -1301,7 +1464,7 @@ sub ImmichKiosk_GetSecret {
       Wird nach der n&auml;chsten erfolgreichen Anfrage an dieselbe Quelle wieder gel&ouml;scht.</li>
     <li><code>album</code> - gew&auml;hltes Album</li>
     <li><code>albumId</code> - Immich-Album-ID(s) oder Kiosk-Schl&uuml;sselwort des gew&auml;hlten Albums</li>
-    <li><code>albumImages</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten: Anzahl der Favoriten-Bilder;
+    <li><code>albumImages</code> - Bildanzahl des gew&auml;hlten Albums; Favoriten / Personen: Anzahl der passenden Bilder;
       - bei den Kiosk-Schl&uuml;sselw&ouml;rtern all, owned, shared</li>
     <li><code>albumSlides</code> - Anzahl Slides des gew&auml;hlten Albums gem&auml;&szlig; Attribut layout</li>
     <li><code>albumDuration</code> - Dauer (HH:MM), bis alle Slides des gew&auml;hlten Albums einmal gezeigt wurden:
@@ -1311,6 +1474,7 @@ sub ImmichKiosk_GetSecret {
       gleiche Reihenfolge wie albumList; virtuelle Alben nutzen ihren Namen, sofern nicht per albumLabels gesetzt</li>
     <li><code>albumLabel</code> - Label des gew&auml;hlten Albums</li>
     <li><code>albumCount</code> - Anzahl der w&auml;hlbaren Alben</li>
+    <li><code>peopleList</code> - Namen aller benannten Personen aus Immich (f&uuml;r virtualAlbums / excludePeople)</li>
     <li><code>url</code> - Kiosk-URL des gew&auml;hlten Albums, ohne Passwort</li>
     <li><code>lastReread</code> - Zeitpunkt des letzten erfolgreichen Einlesens</li>
     <li><code>lastCommand</code> - letzter an Fully gesendeter Befehl (nextImage, prevImage, addToFavorites, removeFromFavorites)</li>

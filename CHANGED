@@ -1,3 +1,6 @@
+2026-11-16 0.6.0 people: virtualAlbums with @person (any: @a,@b / all together: @a+@b),
+                 attribute excludePeople, get people, reading peopleList;
+                 albumImages / albumSlides also for people (needs permission person.read)
 2026-11-14 0.5.10 albumRefreshInterval: default 86400 (once a day), 0 = off
 2026-11-13 0.5.9 new attribute albumLabels: own labels (e.g. for virtual albums), also
                  overrides the Immich name of real albums
