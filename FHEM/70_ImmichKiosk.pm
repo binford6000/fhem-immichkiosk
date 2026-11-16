@@ -25,7 +25,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.6.0";
+my $IK_VERSION = "0.6.1";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 # raw Immich people lists per device (named, not hidden)
@@ -614,6 +614,9 @@ sub ImmichKiosk_ExcludeIds {
   my %pid  = map { lc($_) => $hash->{helper}{people}{$_}{id} } keys %{$hash->{helper}{people} // {}};
   my @ids;
   for my $x (split(/[\s,]+/, AttrVal($name, "excludePeople", ""))) {
+    # @ is optional, same notation as in virtualAlbums
+    $x =~ s/^@//;
+    next if ($x eq "");
     my $id = $pid{lc($x)} // ($x =~ /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i ? $x : undef);
     if (defined($id)) {
       push(@ids, $id);
@@ -1245,7 +1248,7 @@ sub ImmichKiosk_GetSecret {
       Example: <code>Kids=@Hannah,@Toni KidsTogether=@Hannah+@Toni</code></li>
     <li><a id="ImmichKiosk-attr-excludePeople"></a><code>excludePeople &lt;person&gt;,&lt;person&gt; ...</code><br>
       Images showing one of these persons are never shown (kiosk exclude_person), for albums and people alike.
-      Names from <code>get people</code> or person IDs, separated by comma or whitespace.
+      Names from <code>get people</code> (optionally prefixed with @) or person IDs, separated by comma or whitespace.
       albumImages / albumSlides do not take this into account.</li>
     <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;album&gt;=&lt;label&gt;,&lt;album&gt;=&lt;label&gt; ...</code><br>
       Own labels (readings albumLabel / albumLabelList), mainly for virtual albums, which otherwise use their name.
@@ -1426,7 +1429,7 @@ sub ImmichKiosk_GetSecret {
       Beispiel: <code>Kinder=@Hannah,@Toni KinderZusammen=@Hannah+@Toni</code></li>
     <li><a id="ImmichKiosk-attr-excludePeople"></a><code>excludePeople &lt;Person&gt;,&lt;Person&gt; ...</code><br>
       Bilder mit einer dieser Personen werden nie angezeigt (Kiosk exclude_person), bei Alben wie bei Personen.
-      Namen aus <code>get people</code> oder Personen-IDs, getrennt durch Komma oder Leerzeichen.
+      Namen aus <code>get people</code> (optional mit @ davor) oder Personen-IDs, getrennt durch Komma oder Leerzeichen.
       albumImages / albumSlides ber&uuml;cksichtigen das nicht.</li>
     <li><a id="ImmichKiosk-attr-albumLabels"></a><code>albumLabels &lt;Album&gt;=&lt;Label&gt;,&lt;Album&gt;=&lt;Label&gt; ...</code><br>
       Eigene Labels (Readings albumLabel / albumLabelList), vor allem f&uuml;r virtuelle Alben, die sonst ihren Namen nutzen.

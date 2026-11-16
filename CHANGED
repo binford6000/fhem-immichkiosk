@@ -1,3 +1,4 @@
+2026-11-16 0.6.1 excludePeople accepts names with @ (same notation as virtualAlbums)
 2026-11-16 0.6.0 people: virtualAlbums with @person (any: @a,@b / all together: @a+@b),
                  attribute excludePeople, get people, reading peopleList;
                  albumImages / albumSlides also for people (needs permission person.read)
