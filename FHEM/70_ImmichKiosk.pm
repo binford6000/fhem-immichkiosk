@@ -1,4 +1,4 @@
-# $Id: 70_ImmichKiosk.pm 24 2026-11-14 10:58:22Z binford6000 $
+# $Id: 70_ImmichKiosk.pm 25 2026-11-16 08:56:55Z binford6000 $
 ##############################################################################
 # 70_ImmichKiosk.pm
 # Controls immich-kiosk (https://github.com/damongolding/immich-kiosk) from FHEM
