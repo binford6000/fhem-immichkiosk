@@ -25,7 +25,7 @@ use warnings;
 use HttpUtils;
 use JSON::PP ();
 use Encode qw(encode decode);
-my $IK_VERSION = "0.6.1";
+my $IK_VERSION = "0.6.2";
 # raw Immich album lists per device (kept outside the device hash to keep "list" readable)
 my %IK_RAW;
 # raw Immich people lists per device (named, not hidden)
@@ -51,7 +51,7 @@ sub ImmichKiosk_Initialize {
   $hash->{GetFn}    = "ImmichKiosk_Get";
   $hash->{AttrFn}   = "ImmichKiosk_Attr";
   $hash->{NotifyFn} = "ImmichKiosk_Notify";
-  $hash->{AttrList} = "disable:0,1 imageDuration imageBuffer layout:single,portrait,landscape,splitview,splitview-landscape "
+  $hash->{AttrList} = "disable:0,1 imageDuration imageBuffer layout:single,portrait,landscape,splitview,splitview-landscape splitviewSource:same,random "
                     . "rotationExclude:textField-long rotationMax rotationRetry progressInterval "
                     . "albumOrder:textField-long albumExclude:textField-long virtualAlbums:textField-long albumLabels:textField-long excludePeople:textField-long "
                     . "albumRefreshInterval urlParams fullyUrl " . $readingFnAttributes;
@@ -598,6 +598,8 @@ sub ImmichKiosk_BuildUrl {
   push(@p, "duration=$dur") if ($dur ne "");
   my $layout = AttrVal($name, "layout", "");
   push(@p, "layout=$layout") if ($layout ne "");
+  my $svs = AttrVal($name, "splitviewSource", "");
+  push(@p, "splitview_source=$svs") if ($svs ne "");
   my $extra = AttrVal($name, "urlParams", "");
   $extra =~ s/^[?&]+//;
   push(@p, $extra) if ($extra ne "");
@@ -1225,6 +1227,15 @@ sub ImmichKiosk_GetSecret {
       Unset: no URL parameter (kiosk config applies), calculated like single.
       Note: kiosk switches splitview to splitview-landscape on devices in portrait orientation;
       the module cannot detect this.</li>
+    <li><a id="ImmichKiosk-attr-splitviewSource"></a><code>splitviewSource same|random</code><br>
+      Source of the second image in splitview / splitview-landscape (requires immich-kiosk 0.48.0 or newer).
+      Passed as URL parameter splitview_source.
+      <ul>
+        <li>same: both images from the same album or person (kiosk default)</li>
+        <li>random: the second image may come from another album or person of the current selection
+          (only relevant for virtual albums with several albums or persons)</li>
+      </ul>
+      Unset: no URL parameter (kiosk config applies). Does not affect the slide calculation.</li>
     <li><a id="ImmichKiosk-attr-rotationExclude"></a><code>rotationExclude &lt;album&gt; ...</code><br>
       Albums skipped by rotation, separated by comma or whitespace.</li>
     <li><a id="ImmichKiosk-attr-rotationMax"></a><code>rotationMax &lt;seconds&gt;</code><br>
@@ -1405,6 +1416,15 @@ sub ImmichKiosk_GetSecret {
       Nicht gesetzt: kein URL-Parameter (es gilt die Kiosk-Konfiguration), Berechnung wie single.
       Hinweis: Kiosk schaltet splitview auf Ger&auml;ten im Hochformat auf splitview-landscape um;
       das kann das Modul nicht erkennen.</li>
+    <li><a id="ImmichKiosk-attr-splitviewSource"></a><code>splitviewSource same|random</code><br>
+      Herkunft des zweiten Bildes bei splitview / splitview-landscape (erfordert immich-kiosk ab 0.48.0).
+      Wird als URL-Parameter splitview_source &uuml;bergeben.
+      <ul>
+        <li>same: beide Bilder aus demselben Album bzw. derselben Person (Kiosk-Standard)</li>
+        <li>random: das zweite Bild darf aus einem anderen Album bzw. einer anderen Person der aktuellen Auswahl stammen
+          (nur bei virtuellen Alben mit mehreren Alben oder Personen relevant)</li>
+      </ul>
+      Nicht gesetzt: kein URL-Parameter (es gilt die Kiosk-Konfiguration). Hat keinen Einfluss auf die Slide-Berechnung.</li>
     <li><a id="ImmichKiosk-attr-rotationExclude"></a><code>rotationExclude &lt;Album&gt; ...</code><br>
       Alben, die die Rotation &uuml;berspringt, getrennt durch Komma oder Leerzeichen.</li>
     <li><a id="ImmichKiosk-attr-rotationMax"></a><code>rotationMax &lt;Sekunden&gt;</code><br>

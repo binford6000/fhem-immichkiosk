@@ -1,3 +1,5 @@
+2026-11-23 0.6.2 new attribute splitviewSource (same|random), passed as URL parameter
+                 splitview_source (requires immich-kiosk 0.48.0)
 2026-11-16 0.6.1 excludePeople accepts names with @ (same notation as virtualAlbums)
 2026-11-16 0.6.0 people: virtualAlbums with @person (any: @a,@b / all together: @a+@b),
                  attribute excludePeople, get people, reading peopleList;
